@@ -1,0 +1,5 @@
+{
+  "name": "@repropath/control", "private": true, "version": "0.1.1", "type": "module",
+  "scripts": { "dev": "tsx src/index.ts", "typecheck": "tsc --noEmit" },
+  "dependencies": { "@repropath/protocol": "workspace:*", "ws": "^8.18.3" }
+}
