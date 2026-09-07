@@ -1,5 +1,5 @@
 {
-  "name": "@repropath/browser-worker", "private": true, "version": "0.1.1", "type": "module",
+  "name": "@repropath/browser-worker", "private": true, "version": "0.1.2", "type": "module",
   "scripts": { "dev": "tsx src/index.ts", "typecheck": "tsc --noEmit" },
-  "dependencies": { "@repropath/protocol": "workspace:*", "playwright": "1.55.1", "ws": "^8.18.3" }
+  "dependencies": { "@repropath/protocol": "workspace:*", "@repropath/streaming": "workspace:*", "playwright": "1.55.1", "ws": "^8.18.3" }
 }

@@ -8,7 +8,7 @@ import type { Session, WorkerMessage } from '@repropath/protocol';
 import { BrowserRuntime } from '../apps/browser-worker/src/runtime.js';
 import { until } from './helpers.js';
 
-const state = (url: string): Session => ({ id: randomUUID(), status: 'starting', requestedUrl: url, currentUrl: '', pageTitle: '', createdAt: new Date().toISOString() });
+const state = (url: string): Session => ({ id: randomUUID(), status: 'starting', requestedUrl: url, currentUrl: '', pageTitle: '', createdAt: new Date().toISOString(), activePageId: null, viewport: { width: 1440, height: 900 }, screencast: { status: 'idle' } });
 test('runtime isolation, cleanup, timeout, page crash and browser restart (real Chromium)', { timeout: 60_000 }, async t => {
   const server = createServer((request, response) => {
     if (request.url === '/hang') return;
