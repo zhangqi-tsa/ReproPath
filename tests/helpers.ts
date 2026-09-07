@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { WebSocket } from 'ws';
-import { ServerMessageSchema, SessionSchema, type ServerMessage, type Session, type SessionEvent } from '@repropath/protocol';
+import { ServerMessageSchema, SessionSchema, type BrowserFrame, type ServerMessage, type Session, type SessionEvent } from '@repropath/protocol';
 
 export async function freePort(): Promise<number> {
   const server = createServer(); server.listen(0, '127.0.0.1'); await once(server, 'listening');
@@ -42,16 +42,21 @@ export async function create(base: string, url: string): Promise<Session> {
   if (response.status !== 201) throw new Error(`Create failed: ${await response.text()}`);
   return SessionSchema.parse(await response.json());
 }
-export async function subscribe(base: string, id: string): Promise<{ socket: WebSocket; events: SessionEvent[]; states: Session[]; messages: ServerMessage[] }> {
+export async function subscribe(base: string, id: string, ackFrames = true): Promise<{ socket: WebSocket; events: SessionEvent[]; states: Session[]; frames: BrowserFrame[]; messages: ServerMessage[] }> {
   const socket = new WebSocket(`${base.replace('http:', 'ws:')}/events`);
   const events: SessionEvent[] = []; const states: Session[] = []; const messages: ServerMessage[] = [];
+  const frames: BrowserFrame[] = [];
   socket.on('message', raw => {
     const message = ServerMessageSchema.parse(JSON.parse(raw.toString())); messages.push(message);
     if (message.type === 'snapshot') { events.push(...message.events); states.push(message.session); }
     if (message.type === 'event') events.push(message.event);
     if (message.type === 'state') states.push(message.session);
+    if (message.type === 'browser-frame') {
+      frames.push(message);
+      if (ackFrames) socket.send(JSON.stringify({ type: 'frame-ack', sessionId: message.sessionId, pageId: message.pageId, frameSequence: message.frameSequence }));
+    }
   });
   await once(socket, 'open'); socket.send(JSON.stringify({ type: 'subscribe', sessionId: id }));
   await until(() => messages.length > 0, 'subscription snapshot');
-  return { socket, events, states, messages };
+  return { socket, events, states, frames, messages };
 }

@@ -11,6 +11,9 @@ importers:
       '@repropath/protocol':
         specifier: workspace:*
         version: link:packages/protocol
+      '@repropath/streaming':
+        specifier: workspace:*
+        version: link:packages/streaming
       '@types/node':
         specifier: ^22.15.0
         version: 22.20.1
@@ -41,6 +44,9 @@ importers:
       '@repropath/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      '@repropath/streaming':
+        specifier: workspace:*
+        version: link:../../packages/streaming
       playwright:
         specifier: 1.55.1
         version: 1.55.1
@@ -53,6 +59,9 @@ importers:
       '@repropath/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      '@repropath/streaming':
+        specifier: workspace:*
+        version: link:../../packages/streaming
       ws:
         specifier: ^8.18.3
         version: 8.21.3
@@ -84,6 +93,12 @@ importers:
       zod:
         specifier: ^3.25.76
         version: 3.25.76
+
+  packages/streaming:
+    dependencies:
+      '@repropath/protocol':
+        specifier: workspace:*
+        version: link:../protocol
 
 packages:
 

@@ -1,14 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
-import { CreateSessionRequest, SubscriptionSchema, WorkerMessageSchema, type Session, type SessionEvent, type ServerMessage, type WorkerCommand } from '@repropath/protocol';
+import { CreateSessionRequest, ClientMessageSchema, WorkerMessageSchema, DEFAULT_VIEWPORT, type BrowserFrame, type Session, type SessionEvent, type ServerMessage, type WorkerCommand } from '@repropath/protocol';
+import { LatestFrameSender } from '@repropath/streaming';
 import { fixturePage } from './fixture.js';
 
 const port = Number(process.env.CONTROL_PORT ?? 4310);
 const workerUrl = process.env.WORKER_URL ?? 'ws://127.0.0.1:4311/worker';
 const webOrigin = process.env.WEB_ORIGIN ?? 'http://127.0.0.1:5173';
-const sessions = new Map<string, { session: Session; events: SessionEvent[] }>();
+const sessions = new Map<string, { session: Session; events: SessionEvent[]; latestFrame?: BrowserFrame }>();
 const subscriptions = new Map<WebSocket, string>();
+const frameSenders = new Map<WebSocket, LatestFrameSender>();
 let worker: WebSocket;
 let stopping = false;
 let reconnect: ReturnType<typeof setTimeout> | undefined;
@@ -21,6 +23,10 @@ function send(socket: WebSocket, message: ServerMessage): void {
 function broadcast(id: string, message: ServerMessage): void {
   for (const [socket, subscribedId] of subscriptions) if (subscribedId === id) send(socket, message);
 }
+function clearFrames(id: string): void {
+  const record = sessions.get(id); if (record) record.latestFrame = undefined;
+  for (const sender of frameSenders.values()) sender.forget(id);
+}
 function connectWorker(): void {
   worker = new WebSocket(workerUrl, { maxPayload: 4 * 1024 * 1024 });
   worker.on('open', () => { workerAlive = true; console.log('Browser Worker connected'); });
@@ -28,10 +34,23 @@ function connectWorker(): void {
   worker.on('message', raw => {
     try {
       const message = WorkerMessageSchema.parse(JSON.parse(raw.toString()));
+      if (message.type === 'browser-frame') {
+        // ACK receipt immediately, independent of UI subscribers or their decode speed.
+        command({ type: 'frame-ack', sessionId: message.sessionId, pageId: message.pageId, frameSequence: message.frameSequence });
+        const record = sessions.get(message.sessionId);
+        if (!record || record.session.status !== 'running' || record.session.activePageId !== message.pageId) return;
+        if ((record.latestFrame?.frameSequence ?? 0) >= message.frameSequence) return;
+        record.latestFrame = message;
+        for (const [socket, id] of subscriptions) if (id === message.sessionId) frameSenders.get(socket)?.offer(message);
+        return;
+      }
       const id = message.type === 'state' ? message.session.id : message.event.sessionId;
       const record = sessions.get(id);
       if (!record || ['failed', 'closed'].includes(record.session.status)) return;
-      if (message.type === 'state') record.session = message.session;
+      if (message.type === 'state') {
+        record.session = message.session;
+        if (['closed', 'failed'].includes(message.session.status) || message.session.screencast.status === 'unavailable') clearFrames(id);
+      }
       else {
         if (message.event.sequence <= (record.events.at(-1)?.sequence ?? 0)) return;
         record.events.push(message.event);
@@ -45,7 +64,8 @@ function connectWorker(): void {
   worker.on('close', () => {
     for (const [id, record] of sessions) {
       if (!['starting', 'running'].includes(record.session.status)) continue;
-      record.session = { ...record.session, status: 'failed', error: 'Browser Worker disconnected' };
+      record.session = { ...record.session, status: 'failed', error: 'Browser Worker disconnected', screencast: { status: 'stopped' } };
+      clearFrames(id);
       const event: SessionEvent = { id: randomUUID(), sessionId: id, sequence: (record.events.at(-1)?.sequence ?? 0) + 1,
         timestamp: new Date().toISOString(), type: 'lifecycle', payload: { status: 'failed', message: 'Browser Worker disconnected' } };
       record.events.push(event);
@@ -82,8 +102,8 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     response.setHeader('Access-Control-Allow-Headers', 'Content-Type'); response.writeHead(204); response.end(); return;
   }
   if (path === '/health') { json(response, 200, { service: 'control', workerConnected: worker.readyState === WebSocket.OPEN }); return; }
-  if (request.method === 'GET' && ['/test-page', '/test-page/next'].includes(path)) {
-    response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); response.end(fixturePage(path.endsWith('/next'))); return;
+  if (request.method === 'GET' && ['/test-page', '/test-page/next', '/test-page/popup'].includes(path)) {
+    response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); response.end(fixturePage(path.endsWith('/next'), path.endsWith('/popup'))); return;
   }
   if (request.method === 'GET' && path === '/fixture/api/user') { json(response, 200, { id: 'fixture-user', name: 'Local Test User' }); return; }
   if (request.method === 'POST' && path === '/sessions') {
@@ -95,11 +115,12 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     if (worker.readyState !== WebSocket.OPEN) { json(response, 503, { error: 'Browser Worker is unavailable; retry shortly' }); return; }
     if (sessions.size >= 100) {
       const expired = [...sessions].find(([, value]) => ['closed', 'failed'].includes(value.session.status));
-      if (expired) sessions.delete(expired[0]);
+      if (expired) { clearFrames(expired[0]); sessions.delete(expired[0]); }
       else { json(response, 429, { error: 'Session limit reached; close a session first' }); return; }
     }
     const session: Session = { id: randomUUID(), status: 'starting', requestedUrl: parsed.data.url,
-      currentUrl: '', pageTitle: '', createdAt: new Date().toISOString() };
+      currentUrl: '', pageTitle: '', createdAt: new Date().toISOString(), activePageId: null,
+      viewport: { ...DEFAULT_VIEWPORT }, screencast: { status: 'idle' } };
     sessions.set(session.id, { session, events: [] });
     command({ type: 'start', session }); json(response, 201, session); return;
   }
@@ -126,17 +147,24 @@ const wss = new WebSocketServer({ server, path: '/events', maxPayload: 16_384,
   verifyClient: (info: { origin: string }) => !info.origin || [webOrigin, `http://127.0.0.1:${port}`, `http://localhost:${port}`].includes(info.origin),
 });
 wss.on('connection', socket => {
+  const sender = new LatestFrameSender({ writable: () => socket.readyState === WebSocket.OPEN && socket.bufferedAmount < 256 * 1024,
+    send: frame => socket.send(JSON.stringify(frame)) });
+  frameSenders.set(socket, sender);
   socket.on('message', raw => {
     try {
-      const message = SubscriptionSchema.parse(JSON.parse(raw.toString()));
+      const message = ClientMessageSchema.parse(JSON.parse(raw.toString()));
+      if (message.type === 'frame-ack') { sender.acknowledge(message); return; }
       const record = sessions.get(message.sessionId);
       if (!record) { send(socket, { type: 'error', message: 'Session not found' }); return; }
+      const previous = subscriptions.get(socket); if (previous) sender.forget(previous);
       subscriptions.set(socket, message.sessionId);
       // Same event-loop turn: snapshot is enqueued before any live events, with no subscription gap.
       send(socket, { type: 'snapshot', session: record.session, events: record.events });
+      // A single current frame is sent separately, including for an unchanged/static page.
+      if (record.latestFrame) sender.offer(record.latestFrame);
     } catch { send(socket, { type: 'error', message: 'Invalid subscribe message' }); }
   });
-  socket.on('close', () => subscriptions.delete(socket));
+  socket.on('close', () => { subscriptions.delete(socket); sender.dispose(); frameSenders.delete(socket); });
   socket.on('error', error => console.error('WebSocket client:', error.message));
 });
 const heartbeat = setInterval(() => {
@@ -149,6 +177,7 @@ server.listen(port, '127.0.0.1', () => console.log(`Control API http://127.0.0.1
 function shutdown(): void {
   stopping = true; clearInterval(heartbeat); clearTimeout(reconnect); worker.close();
   for (const socket of wss.clients) socket.close();
+  for (const sender of frameSenders.values()) sender.dispose();
   wss.close(); server.close();
 }
 process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown);
