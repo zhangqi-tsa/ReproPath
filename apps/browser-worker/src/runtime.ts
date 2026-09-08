@@ -3,6 +3,9 @@ import { chromium, type Browser, type BrowserContext, type Frame, type Page, typ
 import { DEFAULT_VIEWPORT, type BrowserInput, type EventData, type PageEventData, type Session, type WorkerMessage } from '@repropath/protocol';
 import { Screencast } from './screencast.js';
 import { PageInput } from './input.js';
+import { LocalArtifactStore, type ArtifactStore } from '@repropath/artifacts';
+import { EvidenceCapture } from './evidence.js';
+import { ActionRecorder } from './action-recorder.js';
 
 interface RuntimePage { id: string; dispose: () => void }
 interface ActiveSession {
@@ -10,6 +13,7 @@ interface ActiveSession {
   pages: Map<Page, RuntimePage>; terminal: boolean; cleanup?: Promise<void>;
   disposeContext?: () => void; cast?: Screencast; retry?: ReturnType<typeof setTimeout>;
   input?: PageInput;
+  recorder?: ActionRecorder;
 }
 export class BrowserRuntime {
   private browser?: Browser;
@@ -19,7 +23,8 @@ export class BrowserRuntime {
   private frameIds = new WeakMap<Frame, string>();
   constructor(private publish: (message: WorkerMessage) => void, private navigationTimeout = 15_000,
     private launch: () => Promise<Browser> = () => chromium.launch({ headless: true }),
-    private initializeContext?: (context: BrowserContext, requestedUrl: string) => Promise<void>) {}
+    private initializeContext?: (context: BrowserContext, requestedUrl: string) => Promise<void>,
+    private artifactStore: ArtifactStore = new LocalArtifactStore()) {}
   private async getBrowser(): Promise<Browser> {
     if (this.browser?.isConnected()) return this.browser;
     if (!this.launching) {
@@ -40,7 +45,8 @@ export class BrowserRuntime {
     if (data.type === 'lifecycle') this.publish({ type: 'event', event: { ...base, ...data } });
     else {
       if (!page) throw new Error('Page events require a Page identity');
-      this.publish({ type: 'event', event: { ...base, pageId: this.pageId(page), ...data } });
+      const event = { ...base, pageId: this.pageId(page), ...data };
+      session.recorder?.observe(event); this.publish({ type: 'event', event });
     }
   }
   private pageId(page: Page): string {
@@ -123,6 +129,7 @@ export class BrowserRuntime {
       dispatch(response.request(), { type: 'response', payload: { requestId: requestId(response.request()), url: response.url(), status: response.status(), statusText: response.statusText() } });
     };
     const onFailed = (request: Request) => {
+      session.recorder?.requestFinished(requestId(request));
       dispatch(request, { type: 'requestfailed', payload: { requestId: requestId(request), url: request.url(), error: request.failure()?.errorText ?? 'Request failed' } });
     };
     const onConsole = (message: ConsoleMessage) => {
@@ -133,10 +140,13 @@ export class BrowserRuntime {
       const page = error.page(); if (!page) return; this.watchPage(session, page);
       this.emit(session, { type: 'pageerror', payload: { message: error.error().message, stack: error.error().stack } }, page);
     };
+    const onFinished = (request: Request) => session.recorder?.requestFinished(requestId(request));
+    context.on('requestfinished', onFinished);
     context.on('page', onPage); context.on('request', onRequest); context.on('response', onResponse);
     context.on('requestfailed', onFailed); context.on('console', onConsole); context.on('weberror', onError);
     session.disposeContext = () => {
       deferred.length = 0;
+      context.off('requestfinished', onFinished);
       context.off('page', onPage); context.off('request', onRequest); context.off('response', onResponse);
       context.off('requestfailed', onFailed); context.off('console', onConsole); context.off('weberror', onError);
     };
@@ -144,10 +154,11 @@ export class BrowserRuntime {
   async start(state: Session): Promise<void> {
     if (this.sessions.has(state.id)) return;
     const session: ActiveSession = { state: { ...state, viewport: { ...DEFAULT_VIEWPORT } }, sequence: 0, frameSequence: 0, pages: new Map(), terminal: false };
+    session.recorder = new ActionRecorder(state.id, () => session.page, () => session.sequence, new EvidenceCapture(this.artifactStore), action => this.publish({ type: 'action-update', action }));
     session.input = new PageInput(() => session.page, () => ({ running: !session.terminal && session.state.status === 'running',
       pageId: session.state.activePageId, ...session.state.viewport }), summary => {
       if (session.page) this.emit(session, { type: 'human-input', payload: summary }, session.page);
-    });
+    }, session.recorder);
     this.sessions.set(state.id, session); this.emit(session, { type: 'lifecycle', payload: { status: 'starting' } });
     try {
       const browser = await this.getBrowser(); if (session.terminal) return;

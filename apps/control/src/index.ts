@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
 import { CreateSessionRequest, ClientMessageSchema, WorkerMessageSchema, DEFAULT_VIEWPORT, type BrowserFrame, type Session, type SessionEvent, type ServerMessage, type WorkerCommand } from '@repropath/protocol';
@@ -6,6 +6,10 @@ import { LatestFrameSender } from '@repropath/streaming';
 import { fixturePage } from './fixture.js';
 import { controlFixture } from './control-fixture.js';
 import { HumanControl } from './human-control.js';
+import { LocalArtifactStore, validArtifactId } from '@repropath/artifacts';
+import { ActionStore } from './actions.js';
+const actions = new ActionStore();
+const artifacts = new LocalArtifactStore();
 
 const port = Number(process.env.CONTROL_PORT ?? 4310);
 const workerUrl = process.env.WORKER_URL ?? 'ws://127.0.0.1:4311/worker';
@@ -43,6 +47,10 @@ function connectWorker(): void {
     try {
       const message = WorkerMessageSchema.parse(JSON.parse(raw.toString()));
       if (message.type === 'input-result') { controls.result(message); return; }
+      if (message.type === 'action-update') {
+        if (sessions.has(message.action.sessionId)) { actions.update(message.action); broadcast(message.action.sessionId, message); }
+        return;
+      }
       if (message.type === 'browser-frame') {
         // ACK receipt immediately, independent of UI subscribers or their decode speed.
         command({ type: 'frame-ack', sessionId: message.sessionId, pageId: message.pageId, frameSequence: message.frameSequence });
@@ -78,6 +86,7 @@ function connectWorker(): void {
     for (const [id, record] of sessions) {
       if (!['starting', 'running'].includes(record.session.status)) continue;
       record.session = { ...record.session, status: 'failed', error: 'Browser Worker disconnected', screencast: { status: 'stopped' } };
+      for (const action of actions.interrupt(id, record.events.at(-1)?.sequence ?? 0)) broadcast(id, { type: 'action-update', action });
       clearFrames(id);
       const event: SessionEvent = { id: randomUUID(), sessionId: id, sequence: (record.events.at(-1)?.sequence ?? 0) + 1,
         timestamp: new Date().toISOString(), type: 'lifecycle', payload: { status: 'failed', message: 'Browser Worker disconnected' } };
@@ -115,6 +124,23 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     response.setHeader('Access-Control-Allow-Headers', 'Content-Type'); response.writeHead(204); response.end(); return;
   }
   if (path === '/health') { json(response, 200, { service: 'control', workerConnected: worker.readyState === WebSocket.OPEN }); return; }
+  if (request.method === 'GET' && path.startsWith('/artifacts/')) {
+    const id = path.slice('/artifacts/'.length); const ref = validArtifactId(id) ? actions.artifact(id) : undefined;
+    if (!ref) { json(response, 404, { error: 'Artifact not found' }); return; }
+    try {
+      const data = await artifacts.read(id);
+      if (data.length !== ref.byteLength || createHash('sha256').update(data).digest('hex') !== ref.sha256) throw new Error('Artifact integrity failure');
+      response.writeHead(200, { 'Content-Type': ref.contentType, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; sandbox" }); response.end(data);
+    } catch { json(response, 404, { error: 'Artifact unavailable' }); }
+    return;
+  }
+  const actionPath = /^\/sessions\/([^/]+)\/actions(?:\/([^/]+))?$/.exec(path);
+  if (request.method === 'GET' && actionPath?.[1]) {
+    if (!sessions.has(actionPath[1])) { json(response, 404, { error: 'Session not found' }); return; }
+    if (actionPath[2]) { const action = actions.get(actionPath[1], actionPath[2]); json(response, action ? 200 : 404, action ?? { error: 'Action not found' }); }
+    else json(response, 200, actions.list(actionPath[1]));
+    return;
+  }
   if (request.method === 'GET' && path === '/test-page/control') {
     response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); response.end(controlFixture()); return;
   }
@@ -122,6 +148,10 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); response.end(fixturePage(path.endsWith('/next'), path.endsWith('/popup'))); return;
   }
   if (request.method === 'GET' && path === '/fixture/api/user') { json(response, 200, { id: 'fixture-user', name: 'Local Test User' }); return; }
+  if (request.method === 'GET' && ['/fixture/api/slow', '/fixture/api/late'].includes(path)) {
+    const timer = setTimeout(() => json(response, 200, { ok: true }), path.endsWith('/slow') ? 1500 : 3000);
+    response.on('close', () => clearTimeout(timer)); return;
+  }
   if (request.method === 'POST' && path === '/sessions') {
     if (!request.headers['content-type']?.startsWith('application/json')) { json(response, 415, { error: 'Use Content-Type: application/json' }); return; }
     let input: unknown;
@@ -131,7 +161,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     if (worker.readyState !== WebSocket.OPEN) { json(response, 503, { error: 'Browser Worker is unavailable; retry shortly' }); return; }
     if (sessions.size >= 100) {
       const expired = [...sessions].find(([, value]) => ['closed', 'failed'].includes(value.session.status));
-      if (expired) { clearFrames(expired[0]); sessions.delete(expired[0]); }
+      if (expired) { clearFrames(expired[0]); actions.forget(expired[0]); sessions.delete(expired[0]); }
       else { json(response, 429, { error: 'Session limit reached; close a session first' }); return; }
     }
     const session: Session = { id: randomUUID(), status: 'starting', requestedUrl: parsed.data.url,

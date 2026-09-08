@@ -1,6 +1,6 @@
-# ReproPath · Milestone 1.3 — Interactive Human Control
+# ReproPath · Milestone 1.4 — Action & Evidence Recorder
 
-当前能力：实时查看真实 Chromium Page，并通过独占 Control Lease 人工接管鼠标、键盘和滚轮。默认 VIEW ONLY；事件来自 Playwright，画面来自 CDP screencast，输入由 Playwright 注入。三条链路独立，不使用预制图片或定时 screenshot。
+当前能力：实时查看并人工控制真实 Chromium，将输入归并为独立 Action，在真实注入前后保存脱敏 Evidence。默认 VIEW ONLY；原有 Timeline 和 Live View 保留，Action、SessionEvent 与 BrowserFrame 各自独立。Evidence 截图由真实 Page 截取，不复用 Live View canvas。
 
 M1.1 的历史边界（M1.2 新增 screencast，M1.3 新增 Human Control）：
 
@@ -21,6 +21,7 @@ apps/
 packages/
   protocol/        Zod 运行时校验与 TypeScript 通信类型
   streaming/       Worker/Control 共用的 latest-frame-wins 有界发送器
+  artifacts/       ArtifactStore 接口与本地原子写入、UUID 读取和磁盘上限
 tests/             真实浏览器 Runtime 与跨进程/UI smoke tests
 pnpm-workspace.yaml
 package.json
@@ -132,7 +133,7 @@ UI 与 Control 使用有界 InputBuffer（128 条），仅合并连续移动，�
 
 输入原文仅为注入临时存在于 BrowserInput、内存队列和目标页面；human-input 的 text 分支只保存 `characterCount`（UTF-16 长度），不保存原文。输入失败和 auth 导入失败返回固定消息，避免 Playwright 异常附带参数；应用不主动打印输入或 Cookie。Cookie Header、认证文件和响应正文不进入 SessionEvent 或 Web UI。
 
-此保证针对输入审计和本地 bootstrap 路径。浏览器 console、URL、pageerror 仍按 M1.1 记录真实内容；若目标站自行把输入/令牌打印到 console、放入 URL 或渲染在页面上，它可能进入事件或实时画面。本阶段没有通用内容脱敏器，不能承诺任意第三方页面的秘密永不出现在所有 SessionEvent/画面中。普通输入框内容也会自然出现在 Live View。
+此保证针对输入审计和本地 bootstrap 路径。浏览器 console、URL、pageerror 仍按 M1.1 记录真实内容；若目标站自行把输入/令牌打印到 console、放入 URL 或渲染在页面上，它可能进入事件或实时画面。M1.4 的 Evidence 会遮盖输入控件并净化 DOM，但没有通用 DLP，不能承诺任意第三方页面的秘密永不出现在所有 SessionEvent/画面中。普通输入框内容仍会自然出现在 Live View。
 
 连接 `ws://127.0.0.1:4310/events`，发送：
 
@@ -211,7 +212,7 @@ M1.3 另覆盖双客户端互斥、窃取/过期租约拒绝、无效坐标/page
 
 人工验收顺序：`pnpm install` → `pnpm typecheck` → `pnpm test` → `pnpm dev` → 打开 Web → 输入本地 fixture URL → Create Session → 确认真实状态与实时 Timeline。
 
-M1.2 目标站验收：输入 `http://usercenter.tsatest.cn` → running → 查看真实登录页 → 复制 `/session/{id}` 并刷新 → 状态、Timeline、Live View 恢复 → 关闭 Session → 画面停止。外部网站仅用于人工验收，自动化测试始终使用本地 fixture。
+M1.2 历史目标站验收：输入 `http://usercenter.tsatest.cn` → running → 查看真实登录页 → 复制 `/session/{id}` 并刷新 → 状态、Timeline、Live View 恢复 → 关闭 Session → 画面停止。外部网站仅用于人工验收，自动化测试始终使用本地 fixture。
 
 ## 错误处理与当前边界
 
@@ -222,4 +223,57 @@ M1.2 目标站验收：输入 `http://usercenter.tsatest.cn` → running → 查
 - 仅本机单用户开发工具，监听 `127.0.0.1`，不提供公网部署、认证、持久化、浏览器隔离安全边界或多 Worker 调度。输入 URL 会由本机 Chromium 访问，包括本地网络地址。
 - 仅支持原活动 Page 的鼠标/键盘输入；没有 popup 控制、触摸、文件上传、原生对话框、系统剪贴板读取或跨设备完整 IME 保证。Meta 快捷键未在本次 Windows 环境进行 macOS 人工验收。
 - CAPTCHA：未解决，且不阻塞 M1.3 本地 fixture 验收。headless/headed 均不保证第三方人机验证通过；复用已有登录状态只用于后续本地诊断。本次收尾不调查或修复 CAPTCHA。
-- 画面仅在内存实时传输；不实现 Evidence storage、Video recording、Screenshot evidence、AI/LLM/Agent、Finding、Replay、Regression 产品能力、Jira、数据库、Redis、Kubernetes、WebRTC、Multi-agent 或通用认证系统。仓库回归测试及 QA 截图不属于产品 Evidence/Regression 功能。
+- Live View 帧仅在内存传输，M1.4 Evidence 独立落盘；不实现 Video、HAR、请求/响应 Body、Cookie/Storage snapshot、AI/LLM/Agent、Finding、Replay、Regression 产品能力、Jira、数据库、Redis、S3/OSS/MinIO、WebRTC、Multi-agent 或通用认证/DLP 系统。仓库回归测试不属于产品 Regression 功能。
+
+
+## M1.4 Action & Evidence
+
+`Raw BrowserInput != Action`、`SessionEvent != Action`、`BrowserFrame != EvidenceSnapshot`。Runtime 的 ActionRecorder 在 PageInput 校验通过后、首次真实注入前识别目标并捕获 Before。目标只含短语义描述，不含 value/outerHTML，不是可回放 locator。actor 模型预留 human/agent/replay，目前仅 human。
+
+| 输入 | Action 归并 |
+| --- | --- |
+| down/up | 首尾距离 ≤6 CSS px 为 click（左/中/右）；>6 为 drag，记录起止位置 |
+| pointer-move | 永不单独生成 Action；移动洪泛仍由 M1.3 有界队列合并 |
+| text | 500ms idle 内连续提交合并 type；只记录 UTF-16 characterCount |
+| wheel | 250ms idle 内合并 scroll，记录累计 deltaX/Y 与 eventCount |
+| key | modifier 不单独记录；非 modifier down/up 或 press 形成 key，保留 modifiers |
+
+新的离散操作在开始前结束旧的 text/scroll。输入完成后 settle：至少 150ms，相关请求结束且 200ms 安静窗口，上限 2000ms；达到上限也完成并标记 timedOut，不使用全页面 networkidle。请求以 requestfinished/requestfailed 结束判定，响应头到达不等于请求体已结束。前一 Action 的 After 完成后才开始下一离散 Action 的 Before，因此证据增加有界延迟；捕获和文件写入有独立超时，失败不会阻止输入。
+
+Action 有独立 UUID、时间、状态 recording/completed/interrupted、Before/After refs、eventSequenceStart/End、networkRequestIds 和 evidenceStatus。输入注入前的 human-input 位于事件范围内；结束前发起的请求用 requestId 关联，即使响应晚于 eventSequenceEnd 仍显示。该关系是时间关联，不是严格因果推断；旧事件被 10,000 条历史上限淘汰后可能无法显示详情。
+
+### Evidence 和隐私
+
+每个 Snapshot 保存独立 UUID、session/action/page ID、phase、时间、URL、title 和 viewport。截图是真实 Page 的原 viewport JPEG（quality 80）；DOM 为 document clone 净化后文本。ArtifactRef 仅含 UUID、kind、contentType、byteLength、SHA-256，没有磁盘路径或 base64。
+
+- 截图遮盖文本类 input（包含默认无 type）、textarea、contenteditable，并整体遮盖 iframe/frame；checkbox/radio/button/range/color 等非文本控件保留。Live View 不做此遮盖。
+- DOM 移除 script/style/noscript/template、注释、iframe/frame/object/embed、on*、style、srcdoc；input value、textarea/select/contenteditable 内容以及敏感属性统一脱敏，data-* 仅保留 data-testid/data-test/data-cy。Shadow DOM 不序列化。
+- 页面上其他普通业务内容仍会进入持久化 screenshot；M1.4 不是通用 DLP 系统。网页若将秘密复制到普通文本、URL、语义标签或 console，不能承诺全部清除。测试 fixture 验证表单原文和秘密哨兵未落入 DOM，截图对应控件为遮盖色。
+- 不保存 Cookie、LocalStorage、SessionStorage、Authorization Header、请求/响应 Body、HAR 或 Video。原有 scoped auth bootstrap 仍仅为本地诊断辅助。
+
+### ArtifactStore、上限与生命周期
+
+`@repropath/artifacts` 定义 put/read 接口；LocalArtifactStore 默认目录为 `~/.repropath/artifacts/`，Worker 与 Control 必须使用同一个 `REPROPATH_ARTIFACT_DIR` 覆盖值（若设置）。测试显式覆盖到忽略的 test-results；产品默认在仓库外。
+
+文件使用生成 UUID，以独占临时文件写入后 rename。单进程串行写入，最多 64 个待写任务。失败保留已有文件。控制端只允许读取当前 Action 索引引用的 UUID，并校验长度/hash；未知、未引用、路径穿越或损坏文件返回 404。
+
+| 限制 | 行为 |
+| --- | --- |
+| 500 Action metadata / Session | 保留最近 500；旧引用失去 API 访问资格 |
+| 前 500 个 Action / Session 保存证据 | 后续仍记录 Action，跳过新截图/DOM，标记 partial |
+| 256 MiB / Session | 证据写入预留预算，超限继续输入但证据不完整 |
+| DOM 5 MiB、JPEG 8 MiB / Snapshot | 超限不保存该 artifact |
+| Artifact 目录 2 GiB / 50,000 文件 | 包含重启前遗留文件；达到上限拒绝新写入，不自动删除旧证据 |
+
+Session close 保留 Action 和 Evidence；关闭/租约撤销/Worker 丢失时未完成 Action 标记 interrupted。Control/Worker 重启不恢复 Session/Action 索引，文件可能残留但不可通过 API 读取。没有数据库、远端存储或自动清理工具；达到目录上限后由本机用户管理旧文件。临时写入/超时或 metadata 淘汰也可能留下不可访问文件，仍计入磁盘上限。
+
+### API 和 UI
+
+- `GET /sessions/:sessionId/actions`：最近 Action 列表（包含摘要和 refs）。
+- `GET /sessions/:sessionId/actions/:actionId`：完整 Action；未知返回 404。
+- `GET /artifacts/:artifactId`：只读取被引用的 artifact，Cache-Control: no-store、nosniff。DOM 为 text/plain; charset=utf-8，图片为 image/jpeg。
+- 独立 `action-update` 从 Worker 经 Control 实时推送；WS 重连通过 REST 恢复历史，不把 Actions 塞入事件 snapshot。
+
+Live Session 下的 Actions 列表显示 actor/kind/target/时间/耗时/证据状态/请求及错误数。展开可看 Before/After、相关网络和 console/page 事件；DOM 仅在 `<pre>` 中作为文本显示。partial/failed 显示 Evidence incomplete。关闭后的 Session 仍可展开证据。
+
+完整 M1.4 测试及人工验收见 [milestone-1.4.md](docs/milestone-1.4.md)。本阶段到此为止，不进入 M2/Agent 开发。CAPTCHA 仍未解决、不阻塞本地 fixture 验收，本次未处理。

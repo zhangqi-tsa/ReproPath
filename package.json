@@ -11,7 +11,7 @@
     "build": "pnpm --filter @repropath/web build"
   },
   "devDependencies": {
-    "@repropath/protocol": "workspace:*", "@repropath/streaming": "workspace:*", "@types/node": "^22.15.0", "@types/ws": "^8.18.0",
+    "@repropath/artifacts": "workspace:*", "@repropath/protocol": "workspace:*", "@repropath/streaming": "workspace:*", "@types/node": "^22.15.0", "@types/ws": "^8.18.0",
     "concurrently": "^9.1.2", "playwright": "1.55.1", "tsx": "^4.20.5", "typescript": "^5.9.2", "vite": "^7.1.5", "ws": "^8.18.3"
   }
 }

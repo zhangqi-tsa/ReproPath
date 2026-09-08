@@ -1,4 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { resolve } from 'node:path';
+process.env.REPROPATH_ARTIFACT_DIR ??= resolve('test-results', 'test-artifacts');
 import { once } from 'node:events';
 import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';

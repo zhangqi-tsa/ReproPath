@@ -104,7 +104,7 @@ test('real Worker link drops frames for a slow Control, and Control disconnect s
   await once(nextSocket, 'open'); const next = initial(local.url);
   nextSocket.send(JSON.stringify({ type: 'start', session: next }));
   await until(() => nextMessages.some(message => message.type === 'browser-frame'), 'new Session after disconnect');
-  assert.ok(nextMessages.every(message => message.type === 'state' ? message.session.id === next.id : message.type === 'event' ? message.event.sessionId === next.id : message.sessionId === next.id));
+  assert.ok(nextMessages.every(message => message.type === 'state' ? message.session.id === next.id : message.type === 'event' ? message.event.sessionId === next.id : message.type === 'action-update' ? message.action.sessionId === next.id : message.sessionId === next.id));
   nextSocket.send(JSON.stringify({ type: 'close', sessionId: next.id }));
   await until(() => nextMessages.some(message => message.type === 'state' && message.session.status === 'closed'), 'worker closes new session');
 });
