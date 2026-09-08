@@ -11,7 +11,8 @@ export class PageInput {
   private leaseId = '';
   private sequence = 0;
   constructor(private page: () => Page | undefined, private active: () => { running: boolean; pageId: string | null; width: number; height: number },
-    private audit: (summary: HumanInputPayload) => void) {}
+    private audit: (summary: HumanInputPayload) => void,
+    private recorder?: { before(message: BrowserInput): Promise<void>; after(message: BrowserInput): void; interrupt(): void }) {}
   private run<T>(action: () => Promise<T>): Promise<T> {
     this.pending++;
     const promise = this.tail.then(action).finally(() => { this.pending--; });
@@ -36,6 +37,8 @@ export class PageInput {
       }
       this.leaseId = message.leaseId; this.sequence = message.inputSequence;
       try {
+        await this.recorder?.before(message);
+        if (token !== this.epoch || !this.active().running) return { ...base, ok: false, code: 'CONTROL_NOT_OWNED', message: '输入已被撤销' };
         const summary = inputSummary(message); if (summary) this.audit(summary);
         const valid = () => token === this.epoch && this.active().running;
         if (input.type === 'text') await page.keyboard.insertText(input.text);
@@ -62,14 +65,17 @@ export class PageInput {
             if (input.type === 'wheel') await page.mouse.wheel(input.deltaX, input.deltaY);
           }
         }
+        this.recorder?.after(message);
         return { ...base, ok: true };
       } catch {
+        this.recorder?.interrupt();
         // Playwright call logs can include insertText arguments. Never forward/log them.
         return { ...base, ok: false, code: 'INPUT_REJECTED', message: '浏览器未能执行输入' };
       }
     });
   }
   reset(): Promise<void> {
+    this.recorder?.interrupt();
     this.epoch++; this.leaseId = ''; this.sequence = 0;
     this.resetPending ??= this.run(async () => {
       const page = this.page();

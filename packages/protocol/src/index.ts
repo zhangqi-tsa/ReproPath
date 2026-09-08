@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { ActionUpdateSchema } from './action.js';
+export * from './action.js';
 import { BrowserInputSchema, ControlAcquireSchema, ControlReleaseSchema, ControlStateSchema, ControlErrorSchema, InputResultSchema, InputResetSchema, HumanInputPayloadSchema } from './input.js';
 export * from './input.js';
 
@@ -55,6 +57,7 @@ export const WorkerCommandSchema = z.discriminatedUnion('type', [
 ]);
 export type WorkerCommand = z.infer<typeof WorkerCommandSchema>;
 export const WorkerMessageSchema = z.discriminatedUnion('type', [
+  ActionUpdateSchema,
   z.object({ type: z.literal('state'), session: SessionSchema }),
   z.object({ type: z.literal('event'), event: SessionEventSchema }),
   BrowserFrameSchema,

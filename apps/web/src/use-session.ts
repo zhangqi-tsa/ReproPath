@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ServerMessageSchema, SessionSchema, type BrowserFrame, type Session, type SessionEvent } from '@repropath/protocol';
+import { ServerMessageSchema, SessionSchema, ActionRecordSchema, type ActionRecord, type BrowserFrame, type Session, type SessionEvent } from '@repropath/protocol';
 import { InputClient, type ControlUiState } from './input-client.js';
 
 export function useSession(id: string | undefined) {
   const [session, setSession] = useState<Session>();
   const [events, setEvents] = useState<SessionEvent[]>([]);
+  const [actions, setActions] = useState<ActionRecord[]>([]);
   const [frame, setFrame] = useState<BrowserFrame>();
   const [error, setError] = useState('');
   const [connection, setConnection] = useState('未订阅');
@@ -19,7 +20,7 @@ export function useSession(id: string | undefined) {
       sessionId: value.sessionId, pageId: value.pageId, frameSequence: value.frameSequence }));
   }, []);
   useEffect(() => {
-    setSession(undefined); setEvents([]); setFrame(undefined); setError(''); setConnection(id ? '恢复 Session…' : '未订阅');
+    setSession(undefined); setEvents([]); setActions([]); setFrame(undefined); setError(''); setConnection(id ? '恢复 Session…' : '未订阅');
     control.lost();
     if (!id) return;
     let disposed = false; let retry: ReturnType<typeof setTimeout>;
@@ -38,11 +39,20 @@ export function useSession(id: string | undefined) {
       setConnection('连接中');
       const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/events`);
       socketRef.current = socket;
-      socket.onopen = () => socket.send(JSON.stringify({ type: 'subscribe', sessionId: id }));
+      socket.onopen = () => {
+        setActions([]);
+        socket.send(JSON.stringify({ type: 'subscribe', sessionId: id }));
+        void fetch(`/sessions/${encodeURIComponent(id!)}/actions`, { signal: abort.signal }).then(async response => {
+          if (!response.ok) throw new Error();
+          const restored = ActionRecordSchema.array().parse(await response.json());
+          if (!disposed) setActions(current => [...new Map([...restored, ...current].map(action => [action.id, action])).values()].slice(-500));
+        }).catch(() => { if (!disposed) setError('Actions 恢复失败，请重连后重试'); });
+      };
       socket.onmessage = message => {
         if (disposed) return;
         try {
           const data = ServerMessageSchema.parse(JSON.parse(String(message.data)));
+          if (data.type === 'action-update') { setActions(previous => [...new Map([...previous, data.action].map(action => [action.id, action])).values()].slice(-500)); return; }
           if (data.type === 'control-state') { control.accept(data); return; }
           if (data.type === 'control-error') { control.denied(data.message); return; }
           if (data.type === 'input-result') { control.result(data); return; }
@@ -71,5 +81,5 @@ export function useSession(id: string | undefined) {
     })();
     return () => { disposed = true; abort.abort(); clearTimeout(retry); control.dispose(); socketRef.current?.close(); socketRef.current = undefined; };
   }, [id, acknowledge, control]);
-  return { session, events, frame, error, connection, acknowledge, control, controlState };
+  return { session, events, actions, frame, error, connection, acknowledge, control, controlState };
 }

@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { SessionSchema } from '@repropath/protocol';
 import { BrowserView } from './browser-view.js';
 import { Timeline } from './timeline.js';
+import { Actions } from './actions.js';
 import { useSession } from './use-session.js';
 import './style.css';
 
@@ -11,7 +12,7 @@ function App(): React.JSX.Element {
   const [id, setId] = useState(routeId);
   const [url, setUrl] = useState('http://127.0.0.1:4310/test-page');
   const [busy, setBusy] = useState(false); const [error, setError] = useState('');
-  const { session, events, frame, error: restoreError, connection, acknowledge, control, controlState } = useSession(id);
+  const { session, events, actions, frame, error: restoreError, connection, acknowledge, control, controlState } = useSession(id);
   useEffect(() => { if (session) setUrl(session.requestedUrl); }, [session?.id]);
   useEffect(() => {
     const changed = () => { setId(routeId()); setError(''); };
@@ -36,7 +37,7 @@ function App(): React.JSX.Element {
     } catch (error) { setError(String(error)); }
   }
   return <main>
-    <header><a className="brand" href="/" aria-label="ReproPath 首页">R<span>↗</span></a><div><h1>ReproPath</h1><p>Interactive Human Control · Milestone 1.3</p></div><span className="milestone">LOCAL RUNTIME</span></header>
+    <header><a className="brand" href="/" aria-label="ReproPath 首页">R<span>↗</span></a><div><h1>ReproPath</h1><p>Action & Evidence Recorder · Milestone 1.4</p></div><span className="milestone">LOCAL RUNTIME</span></header>
     <section className={`create ${session ? 'compact' : ''}`}><h2>创建浏览器 Session</h2>
       <form onSubmit={event => { void create(event); }}><label htmlFor="url">目标 URL</label><div className="input-row"><input id="url" type="url" required value={url} onChange={event => setUrl(event.target.value)} /><button disabled={busy}>{busy ? '创建中…' : 'Create Session'}</button></div></form>
       {!session && <p className="hint">在独立 Chromium 页面中实时观察画面与事件。可使用本地 fixture，或输入目标网站地址。</p>}
@@ -56,7 +57,7 @@ function App(): React.JSX.Element {
             <dt>Created At</dt><dd>{new Date(session.createdAt).toLocaleString()}</dd>
           </dl><p className="hint">此地址可复制或刷新恢复。popup 事件会保留，画面始终显示原活动页面。</p></aside>
         </div>{session.error && <p className="error">{session.error}</p>}
-      </section><Timeline events={events} />
+      </section><Actions actions={actions} events={events} /><Timeline events={events} />
     </> : !id && <div className="welcome"><div className="view-icon">▣</div><h2>看见浏览器正在发生什么</h2><p>创建 Session 后，实时画面将在这里显示。<br/>页面事件同步记录在下方 Timeline。</p><span className="readonly">只读 · 实时 · 独立浏览器上下文</span></div>}
     <footer>Chromium → CDP Screencast → BrowserFrame → Live View</footer>
   </main>;
