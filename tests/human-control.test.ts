@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile, rm } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import test from 'node:test';
 import { chromium } from 'playwright';
 import { BrowserInputSchema, type BrowserInput, type InputAction } from '@repropath/protocol';
@@ -35,7 +36,12 @@ const pointer = (type: 'pointer-move' | 'pointer-down' | 'pointer-up', x: number
 test('M1.3 real Control leases and Playwright input chain', { timeout: 120_000 }, async t => {
   const workerPort = await freePort(), controlPort = await freePort(), webPort = await freePort();
   const base = `http://127.0.0.1:${controlPort}`, webUrl = `http://127.0.0.1:${webPort}`;
-  const worker = service('apps/browser-worker/src/index.ts', { WORKER_PORT: String(workerPort) });
+  const cookieSentinel = 'M13_FAKE_AUTH_COOKIE_NOT_A_CREDENTIAL';
+  await mkdir('test-results', { recursive: true });
+  const authPath = resolve('test-results', `m13-auth-${randomUUID()}.json`);
+  await writeFile(authPath, JSON.stringify({ origin: base, cookieHeader: `session=${cookieSentinel}` }));
+  t.after(() => rm(authPath, { force: true }));
+  const worker = service('apps/browser-worker/src/index.ts', { WORKER_PORT: String(workerPort), REPROPATH_AUTH_FILE: authPath });
   const control = service('apps/control/src/index.ts', { CONTROL_PORT: String(controlPort), WORKER_URL: `ws://127.0.0.1:${workerPort}/worker`, WEB_ORIGIN: webUrl });
   t.after(async () => { await control.stop(); await worker.stop(); }); await ready(base, true);
   const session = await create(base, `${base}/test-page/control`);
@@ -184,6 +190,11 @@ test('M1.3 real Control leases and Playwright input chain', { timeout: 120_000 }
       });
       await until(() => logs(observer, 'input-length: 7') >= 2, 'plain text paste');
       assert.equal(JSON.stringify(observer.events).includes('paste测试'), false); assert.equal(JSON.stringify(observer.events).includes('张三'), false);
+      for (const sentinel of ['hello测试', 'paste测试', '张三', cookieSentinel]) {
+        assert.equal(JSON.stringify(observer.messages.filter(message => message.type !== 'browser-frame')).includes(sentinel), false, 'event/state transport must not disclose input or bootstrap cookies');
+        assert.equal((worker.logs() + control.logs() + vite.logs()).includes(sentinel), false, 'application stdout/stderr must not disclose input or bootstrap cookies');
+        assert.equal((await page.locator('body').innerText()).includes(sentinel), false, 'UI metadata and Timeline must not disclose input or bootstrap cookies');
+      }
       await page.setViewportSize({ width: 1500, height: 1150 });
       await page.getByTestId('browser-canvas').scrollIntoViewIfNeeded();
       const rect = await page.getByTestId('browser-canvas').boundingBox(); assert.ok(rect);
