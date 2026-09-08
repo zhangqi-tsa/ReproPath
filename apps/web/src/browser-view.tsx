@@ -1,10 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import type { BrowserFrame, Session } from '@repropath/protocol';
+import type { InputClient, ControlUiState } from './input-client.js';
+import { useBrowserInput } from './use-browser-input.js';
 
-export function BrowserView({ session, frame, connected, acknowledge }: {
+export function BrowserView({ session, frame, connected, acknowledge, control, controlState }: {
   session: Session; frame?: BrowserFrame; connected: boolean; acknowledge: (frame: BrowserFrame) => void;
+  control: InputClient; controlState: ControlUiState;
 }): React.JSX.Element {
   const canvas = useRef<HTMLCanvasElement>(null);
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  const [focused, setFocused] = useState(false);
   const [drawn, setDrawn] = useState(0);
   const [decodeError, setDecodeError] = useState(false);
   const [fps, setFps] = useState(0);
@@ -40,12 +45,19 @@ export function BrowserView({ session, frame, connected, acknowledge }: {
   else if (!connected || session.screencast.status === 'unavailable' || decodeError) message = '浏览器画面暂时不可用';
   else if (!drawn) message = '等待浏览器画面…';
   const live = !message && running;
-  return <div className="browser-panel">
-    <div className="browser-toolbar"><span className={live ? 'live-indicator' : 'view-indicator'} data-testid="view-status">{live ? '● LIVE' : message}</span><span className="readonly">只读画面</span></div>
+  const controlled = controlState.mode === 'HUMAN CONTROL' && connected && running;
+  useBrowserInput(canvas, textarea, controlled && live, session, drawn, control, setFocused);
+  return <div className={`browser-panel ${controlled ? 'human-controlled' : ''} ${focused && controlled ? 'remote-focused' : ''}`}>
+    <div className="browser-toolbar"><span className={live ? 'live-indicator' : 'view-indicator'} data-testid="view-status">{live ? '● LIVE' : message}</span>
+      <span className="control-mode" data-testid="control-mode">{connected ? controlState.mode : controlState.mode === 'CONTROL LOST' ? 'CONTROL LOST' : 'VIEW ONLY'}</span>
+      {controlled ? <button onClick={() => control.release()}>结束接管</button> : <button disabled={!live || !connected || controlState.mode === 'REQUESTING CONTROL'} onClick={() => control.acquire(session.id)}>{controlState.mode === 'REQUESTING CONTROL' ? '请求接管中…' : '接管浏览器'}</button>}
+    </div>
     <div className="browser-stage" style={{ aspectRatio: `${session.viewport.width} / ${session.viewport.height}` }}>
-      <canvas ref={canvas} aria-label="实时浏览器画面（只读）" data-testid="browser-canvas" data-frame-sequence={drawn} hidden={!live} />
+      <canvas ref={canvas} aria-label={controlled ? '实时浏览器画面（可控制）' : '实时浏览器画面（只读）'} data-testid="browser-canvas" data-frame-sequence={drawn} hidden={!live} />
+      <textarea ref={textarea} className="remote-text-input" aria-label="远程键盘输入" autoComplete="off" autoCapitalize="off" spellCheck={false} tabIndex={-1} readOnly={!controlled} />
       {message && <div className="view-placeholder" role="status"><span className="view-icon">▣</span><p>{message}</p>{session.screencast.error && <small>正在尝试恢复画面流，Timeline 仍可使用。</small>}</div>}
     </div>
-    <div className="browser-footer"><span>{session.viewport.width} × {session.viewport.height}</span><span data-testid="fps">{live ? fps : 0} FPS · 显示帧率</span><span>只读 · 不转发鼠标、键盘或滚动</span></div>
+    <div className="browser-footer"><span>{session.viewport.width} × {session.viewport.height}</span><span data-testid="fps">{live ? fps : 0} FPS · 显示帧率</span><span>{controlled ? focused ? '键盘正在输入远端 · 点击其他 UI 离开' : '点击画面获得远程键盘焦点' : 'VIEW ONLY · 接管后可操作'}</span></div>
+    {controlState.error && <p className="control-error" role="alert">{controlState.error}</p>}
   </div>;
 }

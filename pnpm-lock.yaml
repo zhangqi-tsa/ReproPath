@@ -71,6 +71,9 @@ importers:
       '@repropath/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      '@repropath/streaming':
+        specifier: workspace:*
+        version: link:../../packages/streaming
       react:
         specifier: ^19.1.1
         version: 19.2.8

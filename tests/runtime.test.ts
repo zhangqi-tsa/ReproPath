@@ -64,6 +64,27 @@ test('runtime isolation, cleanup, timeout, page crash and browser restart (real 
     await runtime.close(session.id); await starting;
     assert.equal(status(session.id), 'closed'); assert.equal(browser.contexts().length, 0);
   });
+  await t.test('input reset releases modifiers and mouse buttons; stale Page cannot inject', async () => {
+    const session = state(base); await runtime.start(session);
+    const page = browser.contexts()[0]!.pages()[0]!;
+    const current = latest(session.id); assert.ok(current?.type === 'state');
+    const leaseId = randomUUID(); const pageId = current.session.activePageId!;
+    await page.evaluate(() => {
+      document.addEventListener('mousedown', event => console.log('buttons: ' + event.buttons));
+      document.addEventListener('keydown', event => console.log('control-held: ' + event.ctrlKey));
+    });
+    await runtime.input({ type: 'browser-input', sessionId: session.id, pageId, leaseId, inputSequence: 1, input: { type: 'key', key: 'Control', action: 'down', modifiers: [] } });
+    await runtime.input({ type: 'browser-input', sessionId: session.id, pageId, leaseId, inputSequence: 2, input: { type: 'pointer-down', x: 40, y: 40, button: 'left', buttons: 1 } });
+    await runtime.resetInput(session.id);
+    const nextLease = randomUUID();
+    await runtime.input({ type: 'browser-input', sessionId: session.id, pageId, leaseId: nextLease, inputSequence: 1, input: { type: 'key', key: 'Enter', action: 'press', modifiers: [] } });
+    await runtime.input({ type: 'browser-input', sessionId: session.id, pageId, leaseId: nextLease, inputSequence: 2, input: { type: 'pointer-down', x: 40, y: 40, button: 'right', buttons: 2 } });
+    await until(() => messages.some(message => message.type === 'event' && message.event.type === 'console' && message.event.payload.text === 'control-held: false'), 'reset releases Control');
+    await until(() => messages.some(message => message.type === 'event' && message.event.type === 'console' && message.event.payload.text === 'buttons: 2'), 'reset releases left button');
+    await runtime.input({ type: 'browser-input', sessionId: session.id, pageId: 'P-stale', leaseId: nextLease, inputSequence: 3, input: { type: 'text', text: 'never-injected' } });
+    assert.ok(messages.some(message => message.type === 'input-result' && message.code === 'STALE_PAGE'));
+    await runtime.close(session.id); assert.equal(browser.contexts().length, 0);
+  });
 });
 test('real launch failure is contained and reported', async () => {
   const messages: WorkerMessage[] = [];

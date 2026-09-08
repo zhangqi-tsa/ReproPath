@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ServerMessageSchema, SessionSchema, type BrowserFrame, type Session, type SessionEvent } from '@repropath/protocol';
+import { InputClient, type ControlUiState } from './input-client.js';
 
 export function useSession(id: string | undefined) {
   const [session, setSession] = useState<Session>();
@@ -8,6 +9,10 @@ export function useSession(id: string | undefined) {
   const [error, setError] = useState('');
   const [connection, setConnection] = useState('未订阅');
   const socketRef = useRef<WebSocket | undefined>(undefined);
+  const [controlState, setControlState] = useState<ControlUiState>({ mode: 'VIEW ONLY', error: '' });
+  const controlRef = useRef<InputClient | undefined>(undefined);
+  controlRef.current ??= new InputClient(() => socketRef.current, setControlState);
+  const control = controlRef.current;
   const acknowledge = useCallback((value: BrowserFrame) => {
     const socket = socketRef.current;
     if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'frame-ack',
@@ -15,6 +20,7 @@ export function useSession(id: string | undefined) {
   }, []);
   useEffect(() => {
     setSession(undefined); setEvents([]); setFrame(undefined); setError(''); setConnection(id ? '恢复 Session…' : '未订阅');
+    control.lost();
     if (!id) return;
     let disposed = false; let retry: ReturnType<typeof setTimeout>;
     let current: Session | undefined; let pendingFrame: BrowserFrame | undefined;
@@ -22,6 +28,7 @@ export function useSession(id: string | undefined) {
     function acceptState(value: Session): void {
       current = value; setSession(value);
       if (['closed', 'failed'].includes(value.status) || value.screencast.status === 'unavailable') {
+        if (['closed', 'failed'].includes(value.status)) control.lost();
         if (pendingFrame) acknowledge(pendingFrame);
         pendingFrame = undefined; setFrame(undefined);
       }
@@ -36,6 +43,9 @@ export function useSession(id: string | undefined) {
         if (disposed) return;
         try {
           const data = ServerMessageSchema.parse(JSON.parse(String(message.data)));
+          if (data.type === 'control-state') { control.accept(data); return; }
+          if (data.type === 'control-error') { control.denied(data.message); return; }
+          if (data.type === 'input-result') { control.result(data); return; }
           if (data.type === 'snapshot') { acceptState(data.session); setEvents(data.events); setConnection('实时连接'); }
           else if (data.type === 'state') acceptState(data.session);
           else if (data.type === 'event') setEvents(previous => previous.some(event => event.id === data.event.id) ? previous : [...previous, data.event].slice(-10_000));
@@ -46,6 +56,7 @@ export function useSession(id: string | undefined) {
         } catch { setError('无法解析服务端消息'); }
       };
       socket.onclose = () => {
+        control.lost();
         if (!disposed) { setConnection('连接中断，正在重连'); setFrame(undefined); retry = setTimeout(connect, 1000); }
       };
       socket.onerror = () => socket.close();
@@ -58,7 +69,7 @@ export function useSession(id: string | undefined) {
         if (!disposed) { acceptState(value); connect(); }
       } catch (error) { if (!disposed) { setError(String(error)); setConnection('恢复失败'); } }
     })();
-    return () => { disposed = true; abort.abort(); clearTimeout(retry); socketRef.current?.close(); socketRef.current = undefined; };
-  }, [id, acknowledge]);
-  return { session, events, frame, error, connection, acknowledge };
+    return () => { disposed = true; abort.abort(); clearTimeout(retry); control.dispose(); socketRef.current?.close(); socketRef.current = undefined; };
+  }, [id, acknowledge, control]);
+  return { session, events, frame, error, connection, acknowledge, control, controlState };
 }

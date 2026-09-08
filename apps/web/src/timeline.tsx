@@ -3,9 +3,17 @@ import type { SessionEvent } from '@repropath/protocol';
 const labels: Record<SessionEvent['type'], string> = {
   navigation: 'NAVIGATION', request: 'REQUEST', response: 'RESPONSE', console: 'CONSOLE',
   pageerror: 'PAGE ERROR', requestfailed: 'REQUEST FAILED', lifecycle: 'LIFECYCLE',
+  'human-input': 'HUMAN INPUT',
 };
 function describe(event: SessionEvent): string {
   switch (event.type) {
+    case 'human-input': {
+      const input = event.payload;
+      if (input.kind === 'text') return `输入文本 · length = ${input.characterCount}`;
+      if (input.kind === 'key') return `按键 ${input.modifiers.join('+')}${input.modifiers.length ? '+' : ''}${input.key} · ${input.action}`;
+      if (input.kind === 'wheel') return `滚轮 Δx=${input.deltaX} Δy=${input.deltaY}`;
+      return `${input.kind} · ${input.button} (${Math.round(input.x)}, ${Math.round(input.y)})`;
+    }
     case 'navigation': return event.payload.url;
     case 'request': return `${event.payload.method} ${event.payload.url}`;
     case 'response': return `HTTP ${event.payload.status} ${event.payload.statusText} · ${event.payload.url}`;
@@ -27,6 +35,7 @@ export const Timeline = memo(function Timeline({ events }: { events: SessionEven
       <div className="event-meta"><span>#{event.sequence}</span><strong>{labels[event.type]}</strong><time>{new Date(event.timestamp).toLocaleTimeString()}</time></div>
       <div className="event-body">{describe(event)}</div>
       {'pageId' in event && <code>pageId: {event.pageId}</code>}
+      {event.type === 'human-input' && <code>inputSequence: {event.payload.inputSequence}{event.payload.sourceFrameSequence ? ` · sourceFrameSequence: ${event.payload.sourceFrameSequence}` : ''}</code>}
       {event.type === 'navigation' && <code>frameId: {event.payload.frameId} · {event.payload.isMainFrame ? 'main frame' : 'subframe'}</code>}
       {'requestId' in event.payload && <code>requestId: {event.payload.requestId}</code>}
       {event.type === 'console' && <code>来源: {event.payload.url || '(unknown)'}:{event.payload.lineNumber + 1}:{event.payload.columnNumber + 1}</code>}

@@ -1,8 +1,8 @@
-# ReproPath · Milestone 1.2 — Live Browser View
+# ReproPath · Milestone 1.3 — Interactive Human Control
 
-当前目标：在 Web UI 中实时观察 Session 内真实 Chromium Page 的只读画面，同时保留独立的浏览器事件 Timeline。浏览器事件来自 Playwright，画面来自 CDP screencast；不使用预制图片或定时 screenshot。
+当前能力：实时查看真实 Chromium Page，并通过独占 Control Lease 人工接管鼠标、键盘和滚轮。默认 VIEW ONLY；事件来自 Playwright，画面来自 CDP screencast，输入由 Playwright 注入。三条链路独立，不使用预制图片或定时 screenshot。
 
-M1.1 的历史边界（M1.2 仅新增只读 screencast，不扩展其余项目）：
+M1.1 的历史边界（M1.2 新增 screencast，M1.3 新增 Human Control）：
 
 > Milestone 1.1 does not implement AI, browser screencast, human takeover, evidence recording, replay, or regression testing.
 
@@ -11,10 +11,11 @@ M1.1 的历史边界（M1.2 仅新增只读 screencast，不扩展其余项目�
 ```text
 Chromium (独立 Context / Session，明确 1440 × 900 viewport)
   ├─ Playwright Events → SessionEvent → Control → WebSocket → Timeline
-  └─ CDP Screencast → BrowserFrame → Control → WebSocket → Canvas Live View
+  ├─ CDP Screencast → BrowserFrame → Control → WebSocket → Canvas Live View
+  └─ Playwright Mouse/Keyboard ← Worker ← Control Lease 校验 ← BrowserInput ← Web UI
 
 apps/
-  web/             React + Vite，只读画面、URL 恢复、状态与 Timeline
+  web/             React + Vite，画面、人工接管、URL 恢复、状态与 Timeline
   control/         HTTP API、事件历史、当前帧缓存、WebSocket、本地 fixture
   browser-worker/  Chromium 生命周期、Page/Frame 身份、CDP screencast
 packages/
@@ -41,6 +42,16 @@ pnpm install
 
 ## 启动
 
+### 可见浏览器诊断模式
+
+可选 scoped auth bootstrap 是本地诊断/启动辅助，不是通用认证系统。设置 `REPROPATH_AUTH_FILE` 为仓库外 JSON 文件的绝对路径，格式为 `{"origin":"https://your-site.example","cookieHeader":"session=your-value"}`。仅当新 Session 的请求 origin 完全匹配时，Worker 才会在首次导航前导入 Cookie；现有 Session 不受影响。文件不得提交到 Git。请求 Cookie 不包含原属性，导入采用 host-only、会话有效期、SameSite=Lax，并按 HTTPS 设置 Secure；不恢复原有 HttpOnly、Path、过期时间或 Local Storage，不复制到其他子域。关闭 Session 清除其 Context；取消启动环境变量并重启 Worker 可停止后续导入。加载错误只返回固定提示，不输出凭据。没有 Web UI 上传/编辑认证信息的入口，也没有令牌刷新功能。
+
+执行 `pnpm dev:headed`，创建 Session 后会弹出该 Session 所在的 Chromium 窗口；Live View 仍显示同一个 Page。默认 `pnpm dev` 保持无头模式。Worker 的 `/health` 返回 `browserMode`，可确认启动模式。
+
+如果默认端口已有开发服务，先自行结束原服务再启动；结束服务会关闭原有 Session，模式不会热切换。可见模式需要本机桌面环境。
+
+排查人工验证：先保持 Web UI 为 VIEW ONLY，直接在 Chromium 窗口中操作；再用 Live View 接管进行对照。直接窗口操作不经过远程控制租约，也不会生成 `human-input` 审计事件，但页面、网络和控制台事件仍正常记录。避免两处同时输入。此模式用于本机诊断，不保证验证码通过，也不修改浏览器指纹或网站校验。
+
 ```bash
 pnpm dev
 ```
@@ -60,11 +71,11 @@ pnpm dev
 
 ## 创建与关闭 Session
 
-打开 Web UI，输入 `http://127.0.0.1:4310/test-page`，点击 **Create Session**。地址变成 `/session/{id}`，应看到 `running`、真实 Current URL / Page Title、Active Page ID，以及 **● LIVE** 的浏览器画面和五类事件。画面按 1440 × 900 坐标系等比缩放，鼠标、键盘、滚动均不会转发到 Worker。
+打开 Web UI，输入 `http://127.0.0.1:4310/test-page/control`，点击 **Create Session**。地址变成 `/session/{id}`，应看到 `running`、真实 Current URL / Page Title、Active Page ID 和 **● LIVE**。画面按 1440 × 900 坐标系等比缩放，默认 VIEW ONLY；点击“接管浏览器”获批后才能转发输入。
 
 复制该地址或刷新网页会先 `GET /sessions/:id`，然后 WebSocket subscribe → snapshot → 当前帧 → 后续事件/帧，无需重新创建 Session。静态页面也可恢复最后一帧。只有 Control 当前进程仍保存的 Session 可以恢复；未知或已淘汰 ID 显示明确提示。已关闭 Session 可以恢复状态和 Timeline，但不再显示旧画面。
 
-本地 fixture 加载后自动打印日志、请求 `/fixture/api/user` 并抛出未捕获异常。页面也提供 Request API、Console Log、Throw Error、Navigate 按钮。使用 `http://127.0.0.1:4310/test-page?navigate=1` 会自动导航到 `/test-page/next`，可观察 URL 和标题变化。直接在个人浏览器打开 fixture 的按钮只操作那个浏览器；本版本没有远程操作 Worker 的能力，因此人工验收 Worker 使用自动触发流程。
+历史 `/test-page` fixture 加载后自动打印日志、请求 `/fixture/api/user` 并抛出未捕获异常，也提供 Request API、Console Log、Throw Error、Navigate 按钮。`?navigate=1` 自动导航到 `/test-page/next`。M1.3 使用 `/test-page/control` 验收真实点击、拖动、输入和滚动；必须在 Live View 中操作，直接打开 fixture 只会测试个人浏览器。
 
 fixture 的计数器每 200 ms 改变，便于观察真实帧更新。`?popup=1` 自动打开新 Page，验证独立 pageId；`?static=1` 停止计数变化，验证静态页恢复。显示 FPS 是每秒实际绘制帧数，静态页面 0 FPS 仍可保持 LIVE；CDP 按画面变化产帧，不承诺固定帧率。
 
@@ -91,6 +102,38 @@ Invoke-RestMethod -Method Delete -Uri "http://127.0.0.1:4310/sessions/$($session
 
 ## 实时协议
 
+### Human Control 与 Control Lease
+
+先 subscribe，再发送 `control-acquire`。Control 维护每 Session 唯一的 socket 所有权和随机 leaseId；先到者获得控制，不支持抢占。`control-state` 只向持有者发送 leaseId，其他客户端显示 CONTROLLED BY OTHER。即使复制了 leaseId，另一个 socket 也不能注入输入。
+
+`control-release`、控制 socket 断开、Session 关闭/失败、Worker/Control 断开会撤销租约、清空队列并重置已按下的鼠标按钮与修饰键。重连/刷新恢复画面但不恢复租约，回到 VIEW ONLY。UI 状态还包括 REQUESTING CONTROL 和 CONTROL LOST。5 秒未收到输入结果会撤销控制；这不是固定时长租约。
+
+### 输入协议与顺序
+
+```ts
+interface BrowserInput {
+  type: 'browser-input';
+  sessionId: string;
+  pageId: string;
+  leaseId: string;
+  inputSequence: number;
+  sourceFrameSequence?: number;
+  input: InputAction;
+}
+```
+
+`InputAction` 支持 pointer-move/down/up（left/middle/right、buttons、x/y）、wheel（x/y、deltaX/Y）、text（Unicode commit）、key（down/up/press、特殊键或修饰快捷键）。坐标以远端 viewport CSS 像素为单位，Control 与 Worker 校验边界、活动 pageId、Session 状态及递增序号。sourceFrameSequence 关联用户看到的帧，不提供历史帧重放或精确时序保证。
+
+UI 与 Control 使用有界 InputBuffer（128 条），仅合并连续移动，保留离散事件顺序；一次仅一个输入在途。离散队列满时明确报错并释放控制。鼠标移动不进入 Timeline；离散 human-input 在 Playwright 注入前记录，包含 pageId/inputSequence/sourceFrameSequence，因此表示“尝试输入”，不是 DOM 已成功响应的证明。
+
+文本使用独立 insertText，最多每块 4096 UTF-16 code units；中文 composition 在结束时提交，粘贴仅发送纯文本。Tab、Backspace、Enter、方向键及 Ctrl/Meta 快捷键走键盘链路。点击画面聚焦隐藏 textarea；仅接管画面阻止宿主页滚动，其他页面控件仍可使用。
+
+### 文本隐私模型
+
+输入原文仅为注入临时存在于 BrowserInput、内存队列和目标页面；human-input 的 text 分支只保存 `characterCount`（UTF-16 长度），不保存原文。输入失败和 auth 导入失败返回固定消息，避免 Playwright 异常附带参数；应用不主动打印输入或 Cookie。Cookie Header、认证文件和响应正文不进入 SessionEvent 或 Web UI。
+
+此保证针对输入审计和本地 bootstrap 路径。浏览器 console、URL、pageerror 仍按 M1.1 记录真实内容；若目标站自行把输入/令牌打印到 console、放入 URL 或渲染在页面上，它可能进入事件或实时画面。本阶段没有通用内容脱敏器，不能承诺任意第三方页面的秘密永不出现在所有 SessionEvent/画面中。普通输入框内容也会自然出现在 Live View。
+
 连接 `ws://127.0.0.1:4310/events`，发送：
 
 ```json
@@ -101,7 +144,7 @@ Invoke-RestMethod -Method Delete -Uri "http://127.0.0.1:4310/sessions/$($session
 
 每个 SessionEvent 都包含 `id`、`sessionId`、从 1 开始单调递增的 `sequence`、ISO `timestamp`、`type`、强类型 `payload`。`request`、`response`、`requestfailed` 用同一 Playwright Request 对象对应的稳定 `requestId` 关联，包括重定向中的独立请求。导航事件区分主 Frame；页面状态只使用主 Page URL/Title。
 
-- navigation、request、response、requestfailed、console、pageerror **必须**带 `pageId`；Session 级 lifecycle 不带该字段，以 discriminated union 表达。
+- navigation、request、response、requestfailed、console、pageerror、human-input **必须**带 `pageId`；Session 级 lifecycle 不带该字段，以 discriminated union 表达。
 - 每个 Playwright Page 分配随机稳定 pageId，导航不改变身份；navigation.payload 包含自有稳定 `frameId` 和 `isMainFrame`，不依赖 CDP Frame ID。
 - `activePageId` 初始为 null，首个 Page 创建后赋值；popup 拥有新 pageId，保留原活动页的画面、URL 和标题，没有 Tab Manager 或标签切换 UI。
 - popup 首次请求可能早于 Playwright 发布 Page：短暂保留真实 Request 对象，Page 出现后通过 Frame 归属补发，不用 URL 猜身份。最多 1024 个待归属事件，超限终止该 Session。Service Worker 自有且无 Page 的网络请求不属于本阶段 Page 事件。
@@ -164,6 +207,8 @@ pnpm build
 
 `pnpm test:smoke` 单独运行跨进程与 React UI 链路；测试中的 fixture error 为预期现象。`pnpm build` 验证 Web 生产资源构建，本里程碑运行方式是 `pnpm dev`。
 
+M1.3 另覆盖双客户端互斥、窃取/过期租约拒绝、无效坐标/pageId、真实三键点击、10,000 次移动合并、文本/IME/粘贴、特殊键、滑块、滚轮、刷新恢复只读、断开/关闭撤销、应用日志和 Timeline 隐私哨兵检查、auth origin/host 隔离。验收环境、32 项测试结果和交互式手工检查见 [Milestone 1.3 验收记录](docs/milestone-1.3.md)。
+
 人工验收顺序：`pnpm install` → `pnpm typecheck` → `pnpm test` → `pnpm dev` → 打开 Web → 输入本地 fixture URL → Create Session → 确认真实状态与实时 Timeline。
 
 M1.2 目标站验收：输入 `http://usercenter.tsatest.cn` → running → 查看真实登录页 → 复制 `/session/{id}` 并刷新 → 状态、Timeline、Live View 恢复 → 关闭 Session → 画面停止。外部网站仅用于人工验收，自动化测试始终使用本地 fixture。
@@ -175,4 +220,6 @@ M1.2 目标站验收：输入 `http://usercenter.tsatest.cn` → running → 查
 - Control 对 Worker 使用 ping/pong；断开的 UI 不影响 Runtime，慢客户端断开后可重新订阅。
 - 状态与事件仅存内存，服务重启不恢复；每 Session 保存最近 10,000 条事件，最多保留 100 个 Session，满额优先淘汰终结 Session，否则返回 429。UI 同样保留最近 10,000 条。
 - 仅本机单用户开发工具，监听 `127.0.0.1`，不提供公网部署、认证、持久化、浏览器隔离安全边界或多 Worker 调度。输入 URL 会由本机 Chromium 访问，包括本地网络地址。
-- 画面仅在内存实时传输；不实现 Evidence storage、Video recording、Screenshot evidence、Remote mouse/keyboard/scroll、Human takeover、AI/LLM/Agent、Finding、Replay、Regression、Jira、数据库、Redis、Kubernetes、WebRTC 或 Multi-agent。测试生成的 Web UI 截图仅用于界面 QA，不是产品证据功能。
+- 仅支持原活动 Page 的鼠标/键盘输入；没有 popup 控制、触摸、文件上传、原生对话框、系统剪贴板读取或跨设备完整 IME 保证。Meta 快捷键未在本次 Windows 环境进行 macOS 人工验收。
+- CAPTCHA：未解决，且不阻塞 M1.3 本地 fixture 验收。headless/headed 均不保证第三方人机验证通过；复用已有登录状态只用于后续本地诊断。本次收尾不调查或修复 CAPTCHA。
+- 画面仅在内存实时传输；不实现 Evidence storage、Video recording、Screenshot evidence、AI/LLM/Agent、Finding、Replay、Regression 产品能力、Jira、数据库、Redis、Kubernetes、WebRTC、Multi-agent 或通用认证系统。仓库回归测试及 QA 截图不属于产品 Evidence/Regression 功能。
