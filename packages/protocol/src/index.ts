@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { BrowserInputSchema, ControlAcquireSchema, ControlReleaseSchema, ControlStateSchema, ControlErrorSchema, InputResultSchema, InputResetSchema, HumanInputPayloadSchema } from './input.js';
+export * from './input.js';
 
 export const HttpUrl = z.string().max(8192).url().refine(value => {
   try {
@@ -20,6 +22,7 @@ export type Session = z.infer<typeof SessionSchema>;
 const base = { id: z.string(), sessionId: z.string(), sequence: z.number().int().positive(), timestamp: z.string().datetime() };
 const pageBase = { ...base, pageId: z.string().min(1) };
 export const SessionEventSchema = z.discriminatedUnion('type', [
+  z.object({ ...pageBase, type: z.literal('human-input'), payload: HumanInputPayloadSchema }),
   z.object({ ...pageBase, type: z.literal('navigation'), payload: z.object({ url: z.string(), frameId: z.string().min(1), isMainFrame: z.boolean() }) }),
   z.object({ ...pageBase, type: z.literal('request'), payload: z.object({ requestId: z.string(), url: z.string(), method: z.string(), resourceType: z.string() }) }),
   z.object({ ...pageBase, type: z.literal('response'), payload: z.object({ requestId: z.string(), url: z.string(), status: z.number(), statusText: z.string() }) }),
@@ -48,20 +51,23 @@ export const WorkerCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('start'), session: SessionSchema }),
   z.object({ type: z.literal('close'), sessionId: z.string() }),
   FrameAckSchema,
+  BrowserInputSchema, InputResetSchema,
 ]);
 export type WorkerCommand = z.infer<typeof WorkerCommandSchema>;
 export const WorkerMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('state'), session: SessionSchema }),
   z.object({ type: z.literal('event'), event: SessionEventSchema }),
   BrowserFrameSchema,
+  InputResultSchema,
 ]);
 export type WorkerMessage = z.infer<typeof WorkerMessageSchema>;
 export const SubscriptionSchema = z.object({ type: z.literal('subscribe'), sessionId: z.string() });
-export const ClientMessageSchema = z.discriminatedUnion('type', [SubscriptionSchema, FrameAckSchema]);
+export const ClientMessageSchema = z.discriminatedUnion('type', [SubscriptionSchema, FrameAckSchema, BrowserInputSchema, ControlAcquireSchema, ControlReleaseSchema]);
 export const ServerMessageSchema = z.discriminatedUnion('type', [
   ...WorkerMessageSchema.options,
   z.object({ type: z.literal('snapshot'), session: SessionSchema, events: z.array(SessionEventSchema) }),
   z.object({ type: z.literal('error'), message: z.string() }),
+  ControlStateSchema, ControlErrorSchema,
 ]);
 export type ServerMessage = z.infer<typeof ServerMessageSchema>;
 export interface ApiError { error: string }

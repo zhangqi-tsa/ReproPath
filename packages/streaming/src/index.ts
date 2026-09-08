@@ -1,4 +1,5 @@
 import { MAX_FRAME_DATA_LENGTH, type BrowserFrame, type FrameAck } from '@repropath/protocol';
+export { InputBuffer } from './input-buffer.js';
 
 /** One in-flight message per connection; at most one pending frame per session.
  * An application ACK is required, so a suspended renderer cannot accumulate a

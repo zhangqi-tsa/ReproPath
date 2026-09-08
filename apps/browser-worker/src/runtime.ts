@@ -1,13 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { chromium, type Browser, type BrowserContext, type Frame, type Page, type Request, type Response, type ConsoleMessage, type WebError } from 'playwright';
-import { DEFAULT_VIEWPORT, type EventData, type PageEventData, type Session, type WorkerMessage } from '@repropath/protocol';
+import { DEFAULT_VIEWPORT, type BrowserInput, type EventData, type PageEventData, type Session, type WorkerMessage } from '@repropath/protocol';
 import { Screencast } from './screencast.js';
+import { PageInput } from './input.js';
 
 interface RuntimePage { id: string; dispose: () => void }
 interface ActiveSession {
   state: Session; sequence: number; frameSequence: number; context?: BrowserContext; page?: Page;
   pages: Map<Page, RuntimePage>; terminal: boolean; cleanup?: Promise<void>;
   disposeContext?: () => void; cast?: Screencast; retry?: ReturnType<typeof setTimeout>;
+  input?: PageInput;
 }
 export class BrowserRuntime {
   private browser?: Browser;
@@ -16,7 +18,8 @@ export class BrowserRuntime {
   private pageIds = new WeakMap<Page, string>();
   private frameIds = new WeakMap<Frame, string>();
   constructor(private publish: (message: WorkerMessage) => void, private navigationTimeout = 15_000,
-    private launch: () => Promise<Browser> = () => chromium.launch({ headless: true })) {}
+    private launch: () => Promise<Browser> = () => chromium.launch({ headless: true }),
+    private initializeContext?: (context: BrowserContext, requestedUrl: string) => Promise<void>) {}
   private async getBrowser(): Promise<Browser> {
     if (this.browser?.isConnected()) return this.browser;
     if (!this.launching) {
@@ -141,11 +144,17 @@ export class BrowserRuntime {
   async start(state: Session): Promise<void> {
     if (this.sessions.has(state.id)) return;
     const session: ActiveSession = { state: { ...state, viewport: { ...DEFAULT_VIEWPORT } }, sequence: 0, frameSequence: 0, pages: new Map(), terminal: false };
+    session.input = new PageInput(() => session.page, () => ({ running: !session.terminal && session.state.status === 'running',
+      pageId: session.state.activePageId, ...session.state.viewport }), summary => {
+      if (session.page) this.emit(session, { type: 'human-input', payload: summary }, session.page);
+    });
     this.sessions.set(state.id, session); this.emit(session, { type: 'lifecycle', payload: { status: 'starting' } });
     try {
       const browser = await this.getBrowser(); if (session.terminal) return;
       const context = await browser.newContext({ viewport: session.state.viewport, deviceScaleFactor: 1 });
       session.context = context;
+      if (session.terminal) { await context.close(); return; }
+      await this.initializeContext?.(context, state.requestedUrl);
       if (session.terminal) { await context.close(); return; }
       this.watchContext(session, context);
       await context.exposeBinding('__repropathTitleChanged', source => {
@@ -198,6 +207,8 @@ export class BrowserRuntime {
     if (status === 'failed') { session.state.error = message; console.error(`[${session.state.id}] ${message}`); }
     this.emit(session, { type: 'lifecycle', payload: { status, message } });
     session.terminal = true; clearTimeout(session.retry); this.state(session);
+    // Fence pending inputs now. Context closure also releases native pressed state.
+    void session.input?.reset();
     session.cleanup = (async () => {
       await session.cast?.stop(); session.cast = undefined; session.disposeContext?.();
       for (const page of session.pages.values()) page.dispose(); session.pages.clear();
@@ -208,6 +219,12 @@ export class BrowserRuntime {
     return session.cleanup;
   }
   async close(id: string): Promise<void> { const session = this.sessions.get(id); if (session) await this.finish(session, 'closed', 'Session closed'); }
+  async input(message: BrowserInput): Promise<void> {
+    const input = this.sessions.get(message.sessionId)?.input;
+    this.publish(input ? await input.apply(message) : { type: 'input-result', sessionId: message.sessionId,
+      leaseId: message.leaseId, inputSequence: message.inputSequence, ok: false, code: 'SESSION_NOT_RUNNING', message: 'Session 未运行' });
+  }
+  resetInput(sessionId: string): Promise<void> { return this.sessions.get(sessionId)?.input?.reset() ?? Promise.resolve(); }
   async closeAll(): Promise<void> {
     await Promise.all([...this.sessions.keys()].map(id => this.close(id)));
     const browser = this.browser ?? await this.launching?.catch(() => undefined); await browser?.close();

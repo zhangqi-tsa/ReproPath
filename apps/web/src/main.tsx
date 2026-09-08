@@ -11,7 +11,7 @@ function App(): React.JSX.Element {
   const [id, setId] = useState(routeId);
   const [url, setUrl] = useState('http://127.0.0.1:4310/test-page');
   const [busy, setBusy] = useState(false); const [error, setError] = useState('');
-  const { session, events, frame, error: restoreError, connection, acknowledge } = useSession(id);
+  const { session, events, frame, error: restoreError, connection, acknowledge, control, controlState } = useSession(id);
   useEffect(() => { if (session) setUrl(session.requestedUrl); }, [session?.id]);
   useEffect(() => {
     const changed = () => { setId(routeId()); setError(''); };
@@ -36,7 +36,7 @@ function App(): React.JSX.Element {
     } catch (error) { setError(String(error)); }
   }
   return <main>
-    <header><a className="brand" href="/" aria-label="ReproPath 首页">R<span>↗</span></a><div><h1>ReproPath</h1><p>Live Browser View · Milestone 1.2</p></div><span className="milestone">LOCAL RUNTIME</span></header>
+    <header><a className="brand" href="/" aria-label="ReproPath 首页">R<span>↗</span></a><div><h1>ReproPath</h1><p>Interactive Human Control · Milestone 1.3</p></div><span className="milestone">LOCAL RUNTIME</span></header>
     <section className={`create ${session ? 'compact' : ''}`}><h2>创建浏览器 Session</h2>
       <form onSubmit={event => { void create(event); }}><label htmlFor="url">目标 URL</label><div className="input-row"><input id="url" type="url" required value={url} onChange={event => setUrl(event.target.value)} /><button disabled={busy}>{busy ? '创建中…' : 'Create Session'}</button></div></form>
       {!session && <p className="hint">在独立 Chromium 页面中实时观察画面与事件。可使用本地 fixture，或输入目标网站地址。</p>}
@@ -45,7 +45,7 @@ function App(): React.JSX.Element {
     {id && !session && !restoreError && <p role="status">正在恢复 Session…</p>}
     {session ? <>
       <section className="live-session" aria-label="Session 状态"><div className="section-heading session-heading"><h2>Live Session</h2><span className={`status ${session.status}`} data-testid="status">{session.status}</span><button className="secondary" onClick={() => { void close(); }} disabled={['closed', 'failed'].includes(session.status)}>关闭 Session</button></div>
-        <div className="live-layout"><BrowserView key={session.id} session={session} frame={frame} connected={connection === '实时连接'} acknowledge={acknowledge} />
+        <div className="live-layout"><BrowserView key={session.id} session={session} frame={frame} connected={connection === '实时连接'} acknowledge={acknowledge} control={control} controlState={controlState} />
           <aside className="session-info"><h3>Session Info</h3><dl>
             <dt>Session ID</dt><dd data-testid="session-id">{session.id}</dd>
             <dt>Current URL</dt><dd data-testid="current-url">{session.currentUrl || '等待导航…'}</dd>

@@ -4,6 +4,8 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { CreateSessionRequest, ClientMessageSchema, WorkerMessageSchema, DEFAULT_VIEWPORT, type BrowserFrame, type Session, type SessionEvent, type ServerMessage, type WorkerCommand } from '@repropath/protocol';
 import { LatestFrameSender } from '@repropath/streaming';
 import { fixturePage } from './fixture.js';
+import { controlFixture } from './control-fixture.js';
+import { HumanControl } from './human-control.js';
 
 const port = Number(process.env.CONTROL_PORT ?? 4310);
 const workerUrl = process.env.WORKER_URL ?? 'ws://127.0.0.1:4311/worker';
@@ -11,10 +13,16 @@ const webOrigin = process.env.WEB_ORIGIN ?? 'http://127.0.0.1:5173';
 const sessions = new Map<string, { session: Session; events: SessionEvent[]; latestFrame?: BrowserFrame }>();
 const subscriptions = new Map<WebSocket, string>();
 const frameSenders = new Map<WebSocket, LatestFrameSender>();
+const closingSessions = new Set<string>();
+const clientAlive = new Map<WebSocket, boolean>();
 let worker: WebSocket;
 let stopping = false;
 let reconnect: ReturnType<typeof setTimeout> | undefined;
 let workerAlive = true;
+const controls = new HumanControl({ session: id => closingSessions.has(id) ? undefined : sessions.get(id)?.session, subscribers: subscriptions,
+  ready: () => worker?.readyState === WebSocket.OPEN,
+  writable: () => worker?.readyState === WebSocket.OPEN && worker.bufferedAmount < 256 * 1024,
+  send, worker: command });
 function send(socket: WebSocket, message: ServerMessage): void {
   if (socket.readyState !== WebSocket.OPEN) return;
   if (socket.bufferedAmount > 8 * 1024 * 1024) { socket.close(1013, 'Slow consumer; reconnect to recover history'); return; }
@@ -34,6 +42,7 @@ function connectWorker(): void {
   worker.on('message', raw => {
     try {
       const message = WorkerMessageSchema.parse(JSON.parse(raw.toString()));
+      if (message.type === 'input-result') { controls.result(message); return; }
       if (message.type === 'browser-frame') {
         // ACK receipt immediately, independent of UI subscribers or their decode speed.
         command({ type: 'frame-ack', sessionId: message.sessionId, pageId: message.pageId, frameSequence: message.frameSequence });
@@ -49,6 +58,8 @@ function connectWorker(): void {
       if (!record || ['failed', 'closed'].includes(record.session.status)) return;
       if (message.type === 'state') {
         record.session = message.session;
+        if (['closed', 'failed'].includes(message.session.status)) closingSessions.delete(id);
+        if (['closed', 'failed'].includes(message.session.status)) controls.revoke(id, 'Session 已终止');
         if (['closed', 'failed'].includes(message.session.status) || message.session.screencast.status === 'unavailable') clearFrames(id);
       }
       else {
@@ -62,6 +73,8 @@ function connectWorker(): void {
   });
   worker.on('error', error => console.error('Worker connection:', error.message));
   worker.on('close', () => {
+    closingSessions.clear();
+    controls.revokeAll('Worker 连接已断开', false);
     for (const [id, record] of sessions) {
       if (!['starting', 'running'].includes(record.session.status)) continue;
       record.session = { ...record.session, status: 'failed', error: 'Browser Worker disconnected', screencast: { status: 'stopped' } };
@@ -102,6 +115,9 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     response.setHeader('Access-Control-Allow-Headers', 'Content-Type'); response.writeHead(204); response.end(); return;
   }
   if (path === '/health') { json(response, 200, { service: 'control', workerConnected: worker.readyState === WebSocket.OPEN }); return; }
+  if (request.method === 'GET' && path === '/test-page/control') {
+    response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); response.end(controlFixture()); return;
+  }
   if (request.method === 'GET' && ['/test-page', '/test-page/next', '/test-page/popup'].includes(path)) {
     response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); response.end(fixturePage(path.endsWith('/next'), path.endsWith('/popup'))); return;
   }
@@ -132,6 +148,9 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     if (request.method === 'DELETE') {
       if (['closed', 'failed'].includes(record.session.status)) { json(response, 200, record.session); return; }
       if (worker.readyState !== WebSocket.OPEN) { json(response, 503, { error: 'Worker unavailable' }); return; }
+      controls.revoke(record.session.id, '正在关闭 Session');
+      // Prevent acquiring a fresh lease in the gap before Worker reports closed.
+      closingSessions.add(record.session.id);
       command({ type: 'close', sessionId: record.session.id }); json(response, 202, { id: record.session.id }); return;
     }
   }
@@ -147,6 +166,7 @@ const wss = new WebSocketServer({ server, path: '/events', maxPayload: 16_384,
   verifyClient: (info: { origin: string }) => !info.origin || [webOrigin, `http://127.0.0.1:${port}`, `http://localhost:${port}`].includes(info.origin),
 });
 wss.on('connection', socket => {
+  clientAlive.set(socket, true); socket.on('pong', () => clientAlive.set(socket, true));
   const sender = new LatestFrameSender({ writable: () => socket.readyState === WebSocket.OPEN && socket.bufferedAmount < 256 * 1024,
     send: frame => socket.send(JSON.stringify(frame)) });
   frameSenders.set(socket, sender);
@@ -154,20 +174,28 @@ wss.on('connection', socket => {
     try {
       const message = ClientMessageSchema.parse(JSON.parse(raw.toString()));
       if (message.type === 'frame-ack') { sender.acknowledge(message); return; }
+      if (message.type === 'browser-input') { controls.input(socket, message); return; }
+      if (message.type === 'control-acquire') { controls.acquire(message.sessionId, socket); return; }
+      if (message.type === 'control-release') { controls.release(message.sessionId, socket, message.leaseId); return; }
       const record = sessions.get(message.sessionId);
       if (!record) { send(socket, { type: 'error', message: 'Session not found' }); return; }
-      const previous = subscriptions.get(socket); if (previous) sender.forget(previous);
+      const previous = subscriptions.get(socket); if (previous && previous !== message.sessionId) { controls.disconnect(socket); sender.forget(previous); }
       subscriptions.set(socket, message.sessionId);
       // Same event-loop turn: snapshot is enqueued before any live events, with no subscription gap.
       send(socket, { type: 'snapshot', session: record.session, events: record.events });
       // A single current frame is sent separately, including for an unchanged/static page.
       if (record.latestFrame) sender.offer(record.latestFrame);
-    } catch { send(socket, { type: 'error', message: 'Invalid subscribe message' }); }
+      controls.state(message.sessionId, socket);
+    } catch { send(socket, { type: 'error', message: 'INVALID_INPUT: 无效客户端消息' }); }
   });
-  socket.on('close', () => { subscriptions.delete(socket); sender.dispose(); frameSenders.delete(socket); });
+  socket.on('close', () => { controls.disconnect(socket); subscriptions.delete(socket); sender.dispose(); frameSenders.delete(socket); clientAlive.delete(socket); });
   socket.on('error', error => console.error('WebSocket client:', error.message));
 });
 const heartbeat = setInterval(() => {
+  for (const [socket, alive] of clientAlive) {
+    if (!alive) { socket.terminate(); continue; }
+    clientAlive.set(socket, false); if (socket.readyState === WebSocket.OPEN) socket.ping();
+  }
   if (worker.readyState !== WebSocket.OPEN) return;
   if (!workerAlive) { worker.terminate(); return; }
   workerAlive = false; worker.ping();
@@ -175,6 +203,7 @@ const heartbeat = setInterval(() => {
 connectWorker();
 server.listen(port, '127.0.0.1', () => console.log(`Control API http://127.0.0.1:${port}`));
 function shutdown(): void {
+  controls.revokeAll('Control 正在关闭');
   stopping = true; clearInterval(heartbeat); clearTimeout(reconnect); worker.close();
   for (const socket of wss.clients) socket.close();
   for (const sender of frameSenders.values()) sender.dispose();

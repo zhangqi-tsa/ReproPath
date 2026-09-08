@@ -4,6 +4,7 @@
   "scripts": {
     "postinstall": "playwright install chromium",
     "dev": "concurrently --kill-others -n worker,control,web \"pnpm --filter @repropath/browser-worker dev\" \"pnpm --filter @repropath/control dev\" \"pnpm --filter @repropath/web dev\"",
+    "dev:headed": "concurrently --kill-others -n worker,control,web \"pnpm --filter @repropath/browser-worker dev --headed\" \"pnpm --filter @repropath/control dev\" \"pnpm --filter @repropath/web dev\"",
     "typecheck": "tsc --noEmit && pnpm -r typecheck",
     "test": "tsx --test --test-concurrency=1 tests/*.test.ts",
     "test:smoke": "tsx --test tests/smoke.test.ts",

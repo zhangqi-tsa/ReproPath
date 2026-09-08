@@ -41,6 +41,16 @@ pnpm install
 
 ## 启动
 
+### 可见浏览器诊断模式
+
+可选本地登录状态导入：设置 `REPROPATH_AUTH_FILE` 为仓库外 JSON 文件的绝对路径，格式为 `{"origin":"https://your-site.example","cookieHeader":"session=your-value"}`。仅当新 Session 的请求 origin 完全匹配时，Worker 才会在首次导航前导入 Cookie；现有 Session 不受影响。文件不得提交到 Git。请求 Cookie 不包含原属性，导入采用 host-only、会话有效期、SameSite=Lax，并按 HTTPS 设置 Secure；不恢复 Local Storage，不复制到其他子域。关闭 Session 清除其 Context；取消环境变量可停止后续导入。加载错误只返回固定提示，不输出凭据。
+
+执行 `pnpm dev:headed`，创建 Session 后会弹出该 Session 所在的 Chromium 窗口；Live View 仍显示同一个 Page。默认 `pnpm dev` 保持无头模式。Worker 的 `/health` 返回 `browserMode`，可确认启动模式。
+
+如果默认端口已有开发服务，先自行结束原服务再启动；结束服务会关闭原有 Session，模式不会热切换。可见模式需要本机桌面环境。
+
+排查人工验证：先保持 Web UI 为 VIEW ONLY，直接在 Chromium 窗口中操作；再用 Live View 接管进行对照。直接窗口操作不经过远程控制租约，也不会生成 `human-input` 审计事件，但页面、网络和控制台事件仍正常记录。避免两处同时输入。此模式用于本机诊断，不保证验证码通过，也不修改浏览器指纹或网站校验。
+
 ```bash
 pnpm dev
 ```
