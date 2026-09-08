@@ -1,14 +1,17 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
-import { CreateSessionRequest, ClientMessageSchema, WorkerMessageSchema, DEFAULT_VIEWPORT, type BrowserFrame, type Session, type SessionEvent, type ServerMessage, type WorkerCommand } from '@repropath/protocol';
+import { CreateSessionRequest, ClientMessageSchema, WorkerMessageSchema, FindingPatchSchema, DEFAULT_VIEWPORT, type BrowserFrame, type Session, type SessionEvent, type ServerMessage, type WorkerCommand } from '@repropath/protocol';
 import { LatestFrameSender } from '@repropath/streaming';
 import { fixturePage } from './fixture.js';
 import { controlFixture } from './control-fixture.js';
 import { HumanControl } from './human-control.js';
 import { LocalArtifactStore, validArtifactId } from '@repropath/artifacts';
 import { ActionStore } from './actions.js';
+import { DetectionRegistry } from './detection.js';
+import { signalFixture, handleSignalFixture } from './signal-fixture.js';
 const actions = new ActionStore();
+const detection = new DetectionRegistry(broadcast);
 const artifacts = new LocalArtifactStore();
 
 const port = Number(process.env.CONTROL_PORT ?? 4310);
@@ -48,7 +51,10 @@ function connectWorker(): void {
       const message = WorkerMessageSchema.parse(JSON.parse(raw.toString()));
       if (message.type === 'input-result') { controls.result(message); return; }
       if (message.type === 'action-update') {
-        if (sessions.has(message.action.sessionId)) { actions.update(message.action); broadcast(message.action.sessionId, message); }
+        if (sessions.has(message.action.sessionId)) {
+          actions.update(message.action); broadcast(message.action.sessionId, message);
+          detection.get(message.action.sessionId)?.detector.onAction(message.action);
+        }
         return;
       }
       if (message.type === 'browser-frame') {
@@ -66,6 +72,7 @@ function connectWorker(): void {
       if (!record || ['failed', 'closed'].includes(record.session.status)) return;
       if (message.type === 'state') {
         record.session = message.session;
+        if (['closed', 'failed'].includes(message.session.status)) detection.stop(id);
         if (['closed', 'failed'].includes(message.session.status)) closingSessions.delete(id);
         if (['closed', 'failed'].includes(message.session.status)) controls.revoke(id, 'Session 已终止');
         if (['closed', 'failed'].includes(message.session.status) || message.session.screencast.status === 'unavailable') clearFrames(id);
@@ -75,6 +82,7 @@ function connectWorker(): void {
         record.events.push(message.event);
         // Bound in-memory history; sequence numbers are never renumbered.
         if (record.events.length > 10_000) record.events.shift();
+        if (!stopping && !closingSessions.has(id)) detection.get(id)?.detector.onEvent(message.event);
       }
       broadcast(id, message);
     } catch (error) { console.error('Invalid worker message:', error); }
@@ -84,6 +92,7 @@ function connectWorker(): void {
     closingSessions.clear();
     controls.revokeAll('Worker 连接已断开', false);
     for (const [id, record] of sessions) {
+      detection.stop(id);
       if (!['starting', 'running'].includes(record.session.status)) continue;
       record.session = { ...record.session, status: 'failed', error: 'Browser Worker disconnected', screencast: { status: 'stopped' } };
       for (const action of actions.interrupt(id, record.events.at(-1)?.sequence ?? 0)) broadcast(id, { type: 'action-update', action });
@@ -120,10 +129,36 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
   }
   if (request.headers.origin) response.setHeader('Access-Control-Allow-Origin', request.headers.origin);
   if (request.method === 'OPTIONS') {
-    response.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+    response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
     response.setHeader('Access-Control-Allow-Headers', 'Content-Type'); response.writeHead(204); response.end(); return;
   }
   if (path === '/health') { json(response, 200, { service: 'control', workerConnected: worker.readyState === WebSocket.OPEN }); return; }
+  const detectionPath = /^\/sessions\/([^/]+)\/(signals|findings)(?:\/([^/]+))?$/.exec(path);
+  if (detectionPath?.[1]) {
+    const result = detection.get(detectionPath[1]);
+    if (!result) { json(response, 404, { error: 'Session not found' }); return; }
+    const findingId = detectionPath[3];
+    if (request.method === 'GET') {
+      if (findingId) {
+        const finding = detectionPath[2] === 'findings' ? result.findings.get(findingId) : undefined;
+        json(response, finding ? 200 : 404, finding ?? { error: 'Finding not found' });
+      } else json(response, 200, detectionPath[2] === 'signals' ? { signals: result.signals.list(), stats: result.stats() } : { findings: result.findings.list(), stats: result.stats() });
+      return;
+    }
+    if (request.method === 'PATCH' && findingId && detectionPath[2] === 'findings') {
+      if (!request.headers['content-type']?.startsWith('application/json')) { json(response, 415, { error: 'Use Content-Type: application/json' }); return; }
+      let input: unknown;
+      try { input = await body(request); } catch { json(response, 400, { error: 'Invalid JSON' }); return; }
+      const parsed = FindingPatchSchema.safeParse(input);
+      if (!parsed.success) { json(response, 400, { error: 'Provide a valid Finding status only' }); return; }
+      const finding = result.triage(findingId, parsed.data.status);
+      json(response, finding ? 200 : 404, finding ?? { error: 'Finding not found' }); return;
+    }
+  }
+  if (request.method === 'GET' && path === '/test-page/signals') {
+    response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); response.end(signalFixture()); return;
+  }
+  if (handleSignalFixture(path, request, response)) return;
   if (request.method === 'GET' && path.startsWith('/artifacts/')) {
     const id = path.slice('/artifacts/'.length); const ref = validArtifactId(id) ? actions.artifact(id) : undefined;
     if (!ref) { json(response, 404, { error: 'Artifact not found' }); return; }
@@ -161,13 +196,14 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     if (worker.readyState !== WebSocket.OPEN) { json(response, 503, { error: 'Browser Worker is unavailable; retry shortly' }); return; }
     if (sessions.size >= 100) {
       const expired = [...sessions].find(([, value]) => ['closed', 'failed'].includes(value.session.status));
-      if (expired) { clearFrames(expired[0]); actions.forget(expired[0]); sessions.delete(expired[0]); }
+      if (expired) { clearFrames(expired[0]); actions.forget(expired[0]); detection.forget(expired[0]); sessions.delete(expired[0]); }
       else { json(response, 429, { error: 'Session limit reached; close a session first' }); return; }
     }
     const session: Session = { id: randomUUID(), status: 'starting', requestedUrl: parsed.data.url,
       currentUrl: '', pageTitle: '', createdAt: new Date().toISOString(), activePageId: null,
       viewport: { ...DEFAULT_VIEWPORT }, screencast: { status: 'idle' } };
     sessions.set(session.id, { session, events: [] });
+    detection.create(session.id);
     command({ type: 'start', session }); json(response, 201, session); return;
   }
   const match = /^\/sessions\/([^/]+)$/.exec(path);
@@ -181,6 +217,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       controls.revoke(record.session.id, '正在关闭 Session');
       // Prevent acquiring a fresh lease in the gap before Worker reports closed.
       closingSessions.add(record.session.id);
+      detection.stop(record.session.id);
       command({ type: 'close', sessionId: record.session.id }); json(response, 202, { id: record.session.id }); return;
     }
   }
@@ -233,6 +270,7 @@ const heartbeat = setInterval(() => {
 connectWorker();
 server.listen(port, '127.0.0.1', () => console.log(`Control API http://127.0.0.1:${port}`));
 function shutdown(): void {
+  detection.stopAll();
   controls.revokeAll('Control 正在关闭');
   stopping = true; clearInterval(heartbeat); clearTimeout(reconnect); worker.close();
   for (const socket of wss.clients) socket.close();

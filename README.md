@@ -1,6 +1,8 @@
-# ReproPath · Milestone 1.4 — Action & Evidence Recorder
+# ReproPath · Milestone 1.5 — Signal & Finding Foundation
 
-当前能力：实时查看并人工控制真实 Chromium，将输入归并为独立 Action，在真实注入前后保存脱敏 Evidence。默认 VIEW ONLY；原有 Timeline 和 Live View 保留，Action、SessionEvent 与 BrowserFrame 各自独立。Evidence 截图由真实 Page 截取，不复用 Live View canvas。
+当前能力：实时查看并人工控制真实 Chromium，记录 Action 与 Before/After Evidence；Control 用六类确定性规则检测 Signal，按当前 Session 内 fingerprint 聚合 Finding，供人工确认、排除或标记已知问题。默认 VIEW ONLY；原有 Timeline、Live View 和 Evidence 保留。
+
+**Finding is not a Bug or Issue. No AI is used in detection or triage.** Signal 是不可编辑的异常事实；只有 Finding 具有人工 triage 状态。检测、severity、fingerprint、grouping、标题均不使用 AI/LLM。
 
 M1.1 的历史边界（M1.2 新增 screencast，M1.3 新增 Human Control）：
 
@@ -14,9 +16,14 @@ Chromium (独立 Context / Session，明确 1440 × 900 viewport)
   ├─ CDP Screencast → BrowserFrame → Control → WebSocket → Canvas Live View
   └─ Playwright Mouse/Keyboard ← Worker ← Control Lease 校验 ← BrowserInput ← Web UI
 
+SessionEvent + ActionUpdate → Control SignalDetector → SignalStore → FindingStore
+                                                           ↓             ↓
+                                                     signal-created  finding-update
+                                                           └── Findings UI + 人工 triage
+
 apps/
-  web/             React + Vite，画面、人工接管、URL 恢复、状态与 Timeline
-  control/         HTTP API、事件历史、当前帧缓存、WebSocket、本地 fixture
+  web/             React + Vite，Live View、Findings、Actions、原始 Timeline
+  control/         HTTP/WS、独立 SignalDetector、Signal/Finding 有界存储、本地 fixture
   browser-worker/  Chromium 生命周期、Page/Frame 身份、CDP screencast
 packages/
   protocol/        Zod 运行时校验与 TypeScript 通信类型
@@ -222,8 +229,8 @@ M1.2 历史目标站验收：输入 `http://usercenter.tsatest.cn` → running �
 - 状态与事件仅存内存，服务重启不恢复；每 Session 保存最近 10,000 条事件，最多保留 100 个 Session，满额优先淘汰终结 Session，否则返回 429。UI 同样保留最近 10,000 条。
 - 仅本机单用户开发工具，监听 `127.0.0.1`，不提供公网部署、认证、持久化、浏览器隔离安全边界或多 Worker 调度。输入 URL 会由本机 Chromium 访问，包括本地网络地址。
 - 仅支持原活动 Page 的鼠标/键盘输入；没有 popup 控制、触摸、文件上传、原生对话框、系统剪贴板读取或跨设备完整 IME 保证。Meta 快捷键未在本次 Windows 环境进行 macOS 人工验收。
-- CAPTCHA：未解决，且不阻塞 M1.3 本地 fixture 验收。headless/headed 均不保证第三方人机验证通过；复用已有登录状态只用于后续本地诊断。本次收尾不调查或修复 CAPTCHA。
-- Live View 帧仅在内存传输，M1.4 Evidence 独立落盘；不实现 Video、HAR、请求/响应 Body、Cookie/Storage snapshot、AI/LLM/Agent、Finding、Replay、Regression 产品能力、Jira、数据库、Redis、S3/OSS/MinIO、WebRTC、Multi-agent 或通用认证/DLP 系统。仓库回归测试不属于产品 Regression 功能。
+- CAPTCHA：未解决，且不阻塞 M1.5 本地 fixture 验收。headless/headed 均不保证第三方人机验证通过；scoped auth bootstrap 仍仅为本地诊断/bootstrap 功能。本次不调查或修复 CAPTCHA。
+- Live View 帧仅在内存传输，M1.4 Evidence 独立落盘；M1.5 新增确定性 Signal/Finding。不实现 Video、HAR、请求/响应 Body、Cookie/Storage snapshot、AI/LLM/Agent、Issue/Bug 对象、Replay、Regression 产品能力、Jira、数据库、Redis、S3/OSS/MinIO、WebRTC、Multi-agent 或通用认证/DLP 系统。仓库回归测试不属于产品 Regression 功能。
 
 
 ## M1.4 Action & Evidence
@@ -276,4 +283,48 @@ Session close 保留 Action 和 Evidence；关闭/租约撤销/Worker 丢失时�
 
 Live Session 下的 Actions 列表显示 actor/kind/target/时间/耗时/证据状态/请求及错误数。展开可看 Before/After、相关网络和 console/page 事件；DOM 仅在 `<pre>` 中作为文本显示。partial/failed 显示 Evidence incomplete。关闭后的 Session 仍可展开证据。
 
-完整 M1.4 测试及人工验收见 [milestone-1.4.md](docs/milestone-1.4.md)。本阶段到此为止，不进入 M2/Agent 开发。CAPTCHA 仍未解决、不阻塞本地 fixture 验收，本次未处理。
+完整 M1.4 历史测试及人工验收见 [milestone-1.4.md](docs/milestone-1.4.md)。
+
+## M1.5 Signal & Finding
+
+`SessionEvent → Signal → Finding` 是三个独立对象。Signal 用独立 UUID，append-only（超出保留上限时淘汰旧记录），只保存安全 facts、sourceEventIds、requestIds 和可选 actionId。Finding 默认为 **待确认**，并不自动认定是问题。
+
+| Signal | 确定性规则 | Severity |
+| --- | --- | --- |
+| HTTP_5XX | response.status 在 500–599 | high |
+| DOCUMENT_REQUEST_FAILED | requestfailed 的原 Request resourceType=document | high |
+| REQUEST_FAILED | 非 document 的 requestfailed；与上条互斥 | medium |
+| PAGE_ERROR | 真实 pageerror | high |
+| CONSOLE_ERROR | console.level=error | medium |
+| DUPLICATE_REQUEST | 同 Action、同 POST/PUT/PATCH/DELETE、完全相同 raw URL，在 ≤1000ms 的窗口内至少两次 | medium |
+
+不检测 HTTP 4xx、warning、重复 GET、性能或视觉异常。Chromium 可能为网络错误自行产生 console.error，此时按独立 Console 规则记录；不同 kind 不合并。
+
+Duplicate 采用从首请求起的非重叠窗口，下一同组请求超过 1000ms 或 Action 结束时结算；三次同窗口 POST 是一个 Signal（count=3），下一 Action 的重复请求是另一个 Signal。未结束的 Action 可以延迟结算，关闭 Session 时未结算窗口丢弃。它可能是合法重试或业务行为，需要人工判断。
+
+safeEndpoint 只保留 HTTP(S) origin/path，丢弃全部 query、fragment、userinfo。Fingerprint 为稳定 SHA-256：kind + method + safeEndpoint，并按类型加入 status、resourceType/failureHash 或安全页面路径/messageHash；不含 sessionId/actionId/时间。Console 原文和完整 stack 不复制到 Signal/Finding，详情通过 sourceEventIds 读取原始事件。原始 Timeline、URL 和现有 Evidence 的隐私边界保持不变；这是派生数据最小化，不是通用 DLP。
+
+Control 的独立 `signal-detector.ts` 用 onEvent/onAction 及有界索引处理事件，不扫描全部历史、不阻塞等待截图、不调用外部服务。在 Page 当前 recording Action 内关联 actionId；Request 保存 requestId→actionId，Action 完成后的慢 500 仍回到原 Action；页面自主错误允许无 Action。
+
+同 Session、同 fingerprint 的新 Signal 累计 occurrenceCount，保留最近 signalIds 和去重的 actionIds。标题固定生成；人工可选择“确认问题 / 不是问题 / 已知问题 / 恢复待确认”。后续相同异常**保留人工状态**。
+
+| 内存上限 / Session | 行为 |
+| --- | --- |
+| 2000 Signals | 淘汰最旧 Signal，signalsDropped 累计 |
+| 500 Findings | 已有 Finding 继续累计；新 fingerprint 被拒绝，findingsDropped 累计（被拒绝的发生次数） |
+| 100 signalIds、100 actionIds / Finding | 引用截断并提示；occurrenceCount 持续累计，Action 数显示保留引用数 |
+| 10,000 Request 索引、10,000 duplicate 请求引用 | 有界关联；超限计入 runtimeDropped，可能失去旧请求关联 |
+
+API/WS 提供 stats，UI 显示“检测结果已达到当前 Session 上限”警告。Session close/Control shutdown 在 teardown 前停止检测并清理运行索引；关闭后 Signals、Findings、triage 和既有 Evidence 在 Control 当前进程内可查看。Session 淘汰同时清除检测存储与索引。重启不恢复，没有数据库。
+
+- `GET /sessions/:id/signals` → `{ signals, stats }`
+- `GET /sessions/:id/findings` → `{ findings, stats }`
+- `GET /sessions/:id/findings/:findingId` → Finding，未知 404
+- `PATCH /sessions/:id/findings/:findingId`，JSON `{ "status": "confirmed" }`；四种合法状态，非法状态/额外字段 400，未知 Finding 404
+- WS：`signal-created`、`finding-update`、`detection-stats`；重连从独立 REST 恢复，Finding revision 防止旧状态覆盖。不会把检测结果塞进原 SessionEvent snapshot。
+
+UI 顺序：Live Session → Findings → Actions → Raw Timeline。Finding 可展开 Signal facts、源事件、最近保留的关联 Action 和原有 Before/After/Network，复用 Evidence 文件。无 Action 或历史已淘汰均有提示。
+
+本地验收：`pnpm dev`，目标 URL 输入 `http://127.0.0.1:4310/test-page/signals`，接管后依次触发 HTTP 500、确认问题、再触发 500、Console Error、Duplicate POST，检查刷新和关闭后的记录。fixture 也包含真实断连、Page Error、慢 500 和负例按钮。
+
+M1.5 的完整规则、容量、隐私及验收记录见 [milestone-1.5.md](docs/milestone-1.5.md)。本阶段不进入 Agent/M2。
