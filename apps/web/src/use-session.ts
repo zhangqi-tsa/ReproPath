@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ServerMessageSchema, SessionSchema, ActionRecordSchema, type ActionRecord, type BrowserFrame, type Session, type SessionEvent } from '@repropath/protocol';
+import { ServerMessageSchema, SessionSchema, ActionRecordSchema, SignalListSchema, FindingListSchema, type Signal, type Finding, type DetectionStats, type ActionRecord, type BrowserFrame, type Session, type SessionEvent } from '@repropath/protocol';
 import { InputClient, type ControlUiState } from './input-client.js';
 
 export function useSession(id: string | undefined) {
   const [session, setSession] = useState<Session>();
   const [events, setEvents] = useState<SessionEvent[]>([]);
   const [actions, setActions] = useState<ActionRecord[]>([]);
+  const [signals, setSignals] = useState<Signal[]>([]);
+  const [findings, setFindings] = useState<Finding[]>([]);
+  const [detectionStats, setDetectionStats] = useState<DetectionStats>();
   const [frame, setFrame] = useState<BrowserFrame>();
   const [error, setError] = useState('');
   const [connection, setConnection] = useState('未订阅');
@@ -21,6 +24,7 @@ export function useSession(id: string | undefined) {
   }, []);
   useEffect(() => {
     setSession(undefined); setEvents([]); setActions([]); setFrame(undefined); setError(''); setConnection(id ? '恢复 Session…' : '未订阅');
+    setSignals([]); setFindings([]); setDetectionStats(undefined);
     control.lost();
     if (!id) return;
     let disposed = false; let retry: ReturnType<typeof setTimeout>;
@@ -38,20 +42,37 @@ export function useSession(id: string | undefined) {
       if (disposed) return;
       setConnection('连接中');
       const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/events`);
+      let liveStats = false;
       socketRef.current = socket;
       socket.onopen = () => {
         setActions([]);
+        setSignals([]); setFindings([]); setDetectionStats(undefined);
         socket.send(JSON.stringify({ type: 'subscribe', sessionId: id }));
+        void Promise.all([
+          fetch(`/sessions/${encodeURIComponent(id!)}/signals`, { signal: abort.signal }),
+          fetch(`/sessions/${encodeURIComponent(id!)}/findings`, { signal: abort.signal }),
+        ]).then(async ([s, f]) => {
+          if (!s.ok || !f.ok) throw new Error();
+          const restoredSignals = SignalListSchema.parse(await s.json());
+          const restoredFindings = FindingListSchema.parse(await f.json());
+          if (disposed || socketRef.current !== socket) return;
+          setSignals(current => [...new Map([...restoredSignals.signals, ...current].map(signal => [signal.id, signal])).values()].slice(-2000));
+          setFindings(current => mergeFindings(restoredFindings.findings, current));
+          if (!liveStats) setDetectionStats(restoredFindings.stats);
+        }).catch(() => { if (!disposed && socketRef.current === socket) setError('检测结果恢复失败，请刷新重试'); });
         void fetch(`/sessions/${encodeURIComponent(id!)}/actions`, { signal: abort.signal }).then(async response => {
           if (!response.ok) throw new Error();
           const restored = ActionRecordSchema.array().parse(await response.json());
-          if (!disposed) setActions(current => [...new Map([...restored, ...current].map(action => [action.id, action])).values()].slice(-500));
+          if (!disposed && socketRef.current === socket) setActions(current => [...new Map([...restored, ...current].map(action => [action.id, action])).values()].slice(-500));
         }).catch(() => { if (!disposed) setError('Actions 恢复失败，请重连后重试'); });
       };
       socket.onmessage = message => {
-        if (disposed) return;
+        if (disposed || socketRef.current !== socket) return;
         try {
           const data = ServerMessageSchema.parse(JSON.parse(String(message.data)));
+          if (data.type === 'signal-created') { setSignals(previous => [...new Map([...previous, data.signal].map(signal => [signal.id, signal])).values()].slice(-2000)); return; }
+          if (data.type === 'finding-update') { setFindings(previous => mergeFindings(previous, [data.finding])); return; }
+          if (data.type === 'detection-stats') { liveStats = true; setDetectionStats(data.stats); return; }
           if (data.type === 'action-update') { setActions(previous => [...new Map([...previous, data.action].map(action => [action.id, action])).values()].slice(-500)); return; }
           if (data.type === 'control-state') { control.accept(data); return; }
           if (data.type === 'control-error') { control.denied(data.message); return; }
@@ -81,5 +102,11 @@ export function useSession(id: string | undefined) {
     })();
     return () => { disposed = true; abort.abort(); clearTimeout(retry); control.dispose(); socketRef.current?.close(); socketRef.current = undefined; };
   }, [id, acknowledge, control]);
-  return { session, events, actions, frame, error, connection, acknowledge, control, controlState };
+  return { session, events, actions, signals, findings, detectionStats, frame, error, connection, acknowledge, control, controlState };
+}
+
+function mergeFindings(first: Finding[], second: Finding[]): Finding[] {
+  const values = new Map(first.map(finding => [finding.id, finding]));
+  for (const finding of second) if ((values.get(finding.id)?.revision ?? 0) <= finding.revision) values.set(finding.id, finding);
+  return [...values.values()].slice(-500);
 }

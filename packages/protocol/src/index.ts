@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { SignalCreatedSchema, FindingUpdateSchema, DetectionStatsUpdateSchema } from './finding.js';
+export * from './finding.js';
 import { ActionUpdateSchema } from './action.js';
 export * from './action.js';
 import { BrowserInputSchema, ControlAcquireSchema, ControlReleaseSchema, ControlStateSchema, ControlErrorSchema, InputResultSchema, InputResetSchema, HumanInputPayloadSchema } from './input.js';
@@ -67,6 +69,7 @@ export type WorkerMessage = z.infer<typeof WorkerMessageSchema>;
 export const SubscriptionSchema = z.object({ type: z.literal('subscribe'), sessionId: z.string() });
 export const ClientMessageSchema = z.discriminatedUnion('type', [SubscriptionSchema, FrameAckSchema, BrowserInputSchema, ControlAcquireSchema, ControlReleaseSchema]);
 export const ServerMessageSchema = z.discriminatedUnion('type', [
+  SignalCreatedSchema, FindingUpdateSchema, DetectionStatsUpdateSchema,
   ...WorkerMessageSchema.options,
   z.object({ type: z.literal('snapshot'), session: SessionSchema, events: z.array(SessionEventSchema) }),
   z.object({ type: z.literal('error'), message: z.string() }),
