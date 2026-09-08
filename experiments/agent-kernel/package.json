@@ -1,0 +1,36 @@
+{
+  "name": "repropath-agent-kernel-bakeoff",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.17.1",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test --test-concurrency=1 tests/*.test.ts",
+    "agent:bakeoff:measure": "tsx src/measure.ts",
+    "agent:bakeoff": "tsx src/run.ts",
+    "agent:bakeoff:test": "tsx --test --test-concurrency=1 tests/*.test.ts",
+    "agent:bakeoff:real": "tsx src/real.ts",
+    "agent:bakeoff:bench": "tsx src/bench.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/mcp": "2.0.45",
+    "@ai-sdk/openai-compatible": "3.0.44",
+    "@earendil-works/pi-agent-core": "0.85.1",
+    "@earendil-works/pi-ai": "0.85.1",
+    "@mastra/core": "1.64.0",
+    "@mastra/mcp": "1.17.3",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "ai": "7.0.93",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.85.1",
+    "@types/node": "22.15.0",
+    "tsx": "4.23.13",
+    "typescript": "5.9.2"
+  }
+}
