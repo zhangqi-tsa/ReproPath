@@ -26,6 +26,22 @@ export class ActionRecorder {
     if (['console', 'pageerror', 'navigation'].includes(event.type)) this.lastActivity = Date.now();
   }
   requestFinished(id: string): void { if (this.pending.delete(id)) this.lastActivity = Date.now(); }
+  private async begin(pageId:string, actor:ActionRecord['actor'], detail:ActionRecord['detail'], position?:{x:number;y:number}, sourceFrameSequence?:number):Promise<ActionRecord|undefined>{
+    const page=this.page();if(!page||page.isClosed())return;
+    this.evidenceEnabled=++this.count<=MAX_ACTIONS;
+    const action:ActionRecord={id:randomUUID(),sessionId:this.sessionId,pageId,actor,kind:detail.kind,status:'recording',startedAt:new Date().toISOString(),sourceFrameSequence,detail,eventSequenceStart:this.sequence()+1,networkRequestIds:[],evidenceStatus:'pending'};
+    this.active=action;this.pending.clear();this.update(action);
+    action.target=await identifyTarget(page,position);action.before=await this.capture.capture(page,action,'before',this.evidenceEnabled);
+    if(action.status==='interrupted')this.complete(action);else this.update(action);return action;
+  }
+  async execute(pageId:string,actor:ActionRecord['actor'],detail:ActionRecord['detail'],valid:()=>boolean,operation:()=>Promise<void>,position?:{x:number;y:number}):Promise<string>{
+    let id='',failed=false;await this.run(async()=>{
+      try{if(this.active)await this.finish();if(!valid())throw Error('REVOKED');
+        const action=await this.begin(pageId,actor,detail,position);if(!action||!valid())throw Error('REVOKED');id=action.id;
+        await operation();if(!valid()){this.interrupt();return;}await this.finish();
+      }catch{failed=true;this.interrupt();}
+    });if(failed||!id)throw Error('RECORDED_OPERATION_FAILED');return id;
+  }
   before(message: BrowserInput): Promise<void> {
     const input = message.input;
     // Moves and key releases are never standalone Actions.
@@ -35,18 +51,11 @@ export class ActionRecorder {
       const kind = input.type === 'text' ? 'type' : input.type === 'wheel' ? 'scroll' : input.type === 'key' ? 'key' : 'click';
       if (this.active && !((kind === 'type' || kind === 'scroll') && this.active.kind === kind)) await this.finish();
       if (this.active) return;
-      const page = this.page(); if (!page || page.isClosed()) return;
-      this.evidenceEnabled = ++this.count <= MAX_ACTIONS;
       const detail: ActionRecord['detail'] = input.type === 'text' ? { kind: 'type', characterCount: 0 }
         : input.type === 'wheel' ? { kind: 'scroll', totalDeltaX: 0, totalDeltaY: 0, eventCount: 0 }
         : input.type === 'key' ? { kind: 'key', key: input.key, modifiers: input.modifiers }
         : { kind: 'click', button: input.button, x: input.x, y: input.y };
-      const action: ActionRecord = { id: randomUUID(), sessionId: this.sessionId, pageId: message.pageId, actor: 'human', kind, status: 'recording',
-        startedAt: new Date().toISOString(), sourceFrameSequence: message.sourceFrameSequence, detail, eventSequenceStart: this.sequence() + 1, networkRequestIds: [], evidenceStatus: 'pending' };
-      this.active = action; this.pending.clear(); this.update(action);
-      action.target = await identifyTarget(page, 'x' in input ? input : undefined);
-      action.before = await this.capture.capture(page, action, 'before', this.evidenceEnabled);
-      if (action.status === 'interrupted') this.complete(action); else this.update(action);
+      await this.begin(message.pageId,'human',detail,'x'in input?input:undefined,message.sourceFrameSequence);
     });
   }
   after(message: BrowserInput): void {

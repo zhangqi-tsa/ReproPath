@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AgentOperationSchema, AgentOperationResultSchema, AgentEpochSchema, AgentRunUpdateSchema, AgentStepUpdateSchema } from '@repropath/agent-protocol';
 import { SignalCreatedSchema, FindingUpdateSchema, DetectionStatsUpdateSchema } from './finding.js';
 export * from './finding.js';
 import { ActionUpdateSchema } from './action.js';
@@ -52,6 +53,7 @@ export const FrameAckSchema = z.object({
 });
 export type FrameAck = z.infer<typeof FrameAckSchema>;
 export const WorkerCommandSchema = z.discriminatedUnion('type', [
+  AgentOperationSchema, AgentEpochSchema,
   z.object({ type: z.literal('start'), session: SessionSchema }),
   z.object({ type: z.literal('close'), sessionId: z.string() }),
   FrameAckSchema,
@@ -59,6 +61,7 @@ export const WorkerCommandSchema = z.discriminatedUnion('type', [
 ]);
 export type WorkerCommand = z.infer<typeof WorkerCommandSchema>;
 export const WorkerMessageSchema = z.discriminatedUnion('type', [
+  AgentOperationResultSchema,
   ActionUpdateSchema,
   z.object({ type: z.literal('state'), session: SessionSchema }),
   z.object({ type: z.literal('event'), event: SessionEventSchema }),
@@ -69,6 +72,7 @@ export type WorkerMessage = z.infer<typeof WorkerMessageSchema>;
 export const SubscriptionSchema = z.object({ type: z.literal('subscribe'), sessionId: z.string() });
 export const ClientMessageSchema = z.discriminatedUnion('type', [SubscriptionSchema, FrameAckSchema, BrowserInputSchema, ControlAcquireSchema, ControlReleaseSchema]);
 export const ServerMessageSchema = z.discriminatedUnion('type', [
+  AgentRunUpdateSchema, AgentStepUpdateSchema,
   SignalCreatedSchema, FindingUpdateSchema, DetectionStatsUpdateSchema,
   ...WorkerMessageSchema.options,
   z.object({ type: z.literal('snapshot'), session: SessionSchema, events: z.array(SessionEventSchema) }),

@@ -4,10 +4,11 @@ import type { BrowserInput, ControlState, InputErrorCode, InputResult, ServerMes
 import { InputBuffer } from '@repropath/streaming';
 
 interface Lease {
-  id: string; socket: WebSocket; lastSequence: number; queue: InputBuffer;
+  id: string; socket?: WebSocket; runId?: string; lastSequence: number; queue: InputBuffer;
   inFlight?: number; timeout?: ReturnType<typeof setTimeout>; retry?: ReturnType<typeof setTimeout>;
 }
-export class HumanControl {
+export class ControlAuthority {
+  onAgentRevoked?: (sessionId:string,runId:string,reason:string)=>void;
   private leases = new Map<string, Lease>();
   constructor(private dependencies: {
     session: (id: string) => Session | undefined;
@@ -18,7 +19,7 @@ export class HumanControl {
   }) {}
   state(sessionId: string, socket: WebSocket, reason?: string): void {
     const lease = this.leases.get(sessionId);
-    const state: ControlState = { type: 'control-state', sessionId, status: lease ? 'controlled' : 'available', heldBySelf: lease?.socket === socket, reason };
+    const state: ControlState = { type: 'control-state', sessionId, status: lease ? 'controlled' : 'available', heldBySelf: lease?.socket === socket, reason, owner:lease ? lease.runId?'agent':'human':undefined };
     if (lease?.socket === socket) state.leaseId = lease.id;
     this.dependencies.send(socket, state);
   }
@@ -30,6 +31,7 @@ export class HumanControl {
     if (session(sessionId)?.status !== 'running' || !ready() || subscribers.get(socket) !== sessionId) {
       send(socket, { type: 'control-error', sessionId, code: 'SESSION_NOT_RUNNING', message: 'Session 尚未运行或连接不可用' }); return;
     }
+    if(this.leases.get(sessionId)?.runId)this.revoke(sessionId,'human_takeover');
     const current = this.leases.get(sessionId);
     if (current) {
       if (current.socket !== socket) send(socket, { type: 'control-error', sessionId, code: 'CONTROL_BUSY', message: '该 Session 正被另一个客户端控制' });
@@ -51,6 +53,7 @@ export class HumanControl {
   revoke(sessionId: string, reason: string, reset = true): void {
     const lease = this.leases.get(sessionId); if (!lease) return;
     this.leases.delete(sessionId); lease.queue.clear(); clearTimeout(lease.retry); clearTimeout(lease.timeout);
+    if(lease.runId){this.dependencies.worker({type:'agent-epoch',sessionId,epoch:null});this.onAgentRevoked?.(sessionId,lease.runId,reason);}
     if (reset && this.dependencies.ready()) this.dependencies.worker({ type: 'input-reset', sessionId });
     this.broadcast(sessionId, reason);
   }
@@ -58,6 +61,14 @@ export class HumanControl {
     for (const [id, lease] of this.leases) if (lease.socket === socket) this.revoke(id, '控制连接已断开');
   }
   revokeAll(reason: string, reset = true): void { for (const id of this.leases.keys()) this.revoke(id, reason, reset); }
+  acquireAgent(sessionId:string,runId:string):string|undefined {
+    if(this.leases.has(sessionId)||!this.dependencies.ready()||this.dependencies.session(sessionId)?.status!=='running')return;
+    const id=randomUUID();this.leases.set(sessionId,{id,runId,lastSequence:0,queue:new InputBuffer()});
+    this.dependencies.worker({type:'input-reset',sessionId});this.dependencies.worker({type:'agent-epoch',sessionId,epoch:id});this.broadcast(sessionId);return id;
+  }
+  ownedByAgent(sessionId:string,runId:string,epoch:string):boolean{const l=this.leases.get(sessionId);return l?.runId===runId&&l.id===epoch;}
+  busy(sessionId:string):boolean{return this.leases.has(sessionId);}
+  humanOwned(sessionId:string):boolean{return !!this.leases.get(sessionId)?.socket;}
   private reject(socket: WebSocket, input: BrowserInput, code: InputErrorCode, message: string): void {
     this.dependencies.send(socket, { type: 'input-result', sessionId: input.sessionId, leaseId: input.leaseId, inputSequence: input.inputSequence, ok: false, code, message });
   }
@@ -87,7 +98,7 @@ export class HumanControl {
     const input = lease.queue.take(); if (!input) return;
     lease.inFlight = input.inputSequence;
     lease.timeout = setTimeout(() => {
-      this.reject(lease.socket, input, 'INPUT_REJECTED', '输入确认超时，控制已停止'); this.revoke(sessionId, '输入确认超时');
+      if(lease.socket)this.reject(lease.socket, input, 'INPUT_REJECTED', '输入确认超时，控制已停止'); this.revoke(sessionId, '输入确认超时');
     }, 5000);
     this.dependencies.worker(input);
   }
@@ -95,6 +106,6 @@ export class HumanControl {
     const lease = this.leases.get(result.sessionId);
     if (!lease || lease.id !== result.leaseId || lease.inFlight !== result.inputSequence) return;
     clearTimeout(lease.timeout); lease.inFlight = undefined;
-    this.dependencies.send(lease.socket, result); this.pump(result.sessionId, lease);
+    if(lease.socket)this.dependencies.send(lease.socket, result); this.pump(result.sessionId, lease);
   }
 }

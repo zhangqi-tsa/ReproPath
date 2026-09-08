@@ -5,11 +5,14 @@ import { CreateSessionRequest, ClientMessageSchema, WorkerMessageSchema, Finding
 import { LatestFrameSender } from '@repropath/streaming';
 import { fixturePage } from './fixture.js';
 import { controlFixture } from './control-fixture.js';
-import { HumanControl } from './human-control.js';
+import { ControlAuthority } from './control-authority.js';
 import { LocalArtifactStore, validArtifactId } from '@repropath/artifacts';
 import { ActionStore } from './actions.js';
 import { DetectionRegistry } from './detection.js';
 import { signalFixture, handleSignalFixture } from './signal-fixture.js';
+import { AgentControl } from './agent-control.js';
+import { RunSchema } from '@repropath/agent-protocol';
+import { agentFixture } from './agent-fixture.js';
 const actions = new ActionStore();
 const detection = new DetectionRegistry(broadcast);
 const artifacts = new LocalArtifactStore();
@@ -26,10 +29,13 @@ let worker: WebSocket;
 let stopping = false;
 let reconnect: ReturnType<typeof setTimeout> | undefined;
 let workerAlive = true;
-const controls = new HumanControl({ session: id => closingSessions.has(id) ? undefined : sessions.get(id)?.session, subscribers: subscriptions,
+const controls = new ControlAuthority({ session: id => closingSessions.has(id) ? undefined : sessions.get(id)?.session, subscribers: subscriptions,
   ready: () => worker?.readyState === WebSocket.OPEN,
   writable: () => worker?.readyState === WebSocket.OPEN && worker.bufferedAmount < 256 * 1024,
   send, worker: command });
+const agents=new AgentControl({session:id=>closingSessions.has(id)?undefined:sessions.get(id)?.session,authority:controls,worker:command,broadcast,
+  findings:id=>(detection.get(id)?.findings.list()??[]).slice(-10).map(f=>({id:f.id,kind:f.signalKind,severity:f.severity,title:f.title.slice(0,300),status:f.status,occurrences:f.occurrenceCount})),
+  limits:process.env.NODE_ENV==='test'?{maxSteps:20,maxRuntimeMs:Number(process.env.REPROPATH_TEST_AGENT_RUNTIME_MS??300000)}:undefined});
 function send(socket: WebSocket, message: ServerMessage): void {
   if (socket.readyState !== WebSocket.OPEN) return;
   if (socket.bufferedAmount > 8 * 1024 * 1024) { socket.close(1013, 'Slow consumer; reconnect to recover history'); return; }
@@ -49,6 +55,7 @@ function connectWorker(): void {
   worker.on('message', raw => {
     try {
       const message = WorkerMessageSchema.parse(JSON.parse(raw.toString()));
+      if(message.type==='agent-operation-result'){agents.workerResult(message.id,message.result);return;}
       if (message.type === 'input-result') { controls.result(message); return; }
       if (message.type === 'action-update') {
         if (sessions.has(message.action.sessionId)) {
@@ -71,10 +78,12 @@ function connectWorker(): void {
       const record = sessions.get(id);
       if (!record || ['failed', 'closed'].includes(record.session.status)) return;
       if (message.type === 'state') {
+        if(message.session.activePageId!==record.session.activePageId||message.session.currentUrl!==record.session.currentUrl)agents.navigation(id);
         record.session = message.session;
         if (['closed', 'failed'].includes(message.session.status)) detection.stop(id);
         if (['closed', 'failed'].includes(message.session.status)) closingSessions.delete(id);
         if (['closed', 'failed'].includes(message.session.status)) controls.revoke(id, 'Session 已终止');
+        if (['closed', 'failed'].includes(message.session.status)) agents.sessionEnded(id);
         if (['closed', 'failed'].includes(message.session.status) || message.session.screencast.status === 'unavailable') clearFrames(id);
       }
       else {
@@ -85,13 +94,14 @@ function connectWorker(): void {
         if (!stopping && !closingSessions.has(id)) detection.get(id)?.detector.onEvent(message.event);
       }
       broadcast(id, message);
-    } catch (error) { console.error('Invalid worker message:', error); }
+    } catch { console.error('INVALID_WORKER_MESSAGE'); }
   });
   worker.on('error', error => console.error('Worker connection:', error.message));
   worker.on('close', () => {
     closingSessions.clear();
     controls.revokeAll('Worker 连接已断开', false);
     for (const [id, record] of sessions) {
+      agents.sessionEnded(id);
       detection.stop(id);
       if (!['starting', 'running'].includes(record.session.status)) continue;
       record.session = { ...record.session, status: 'failed', error: 'Browser Worker disconnected', screencast: { status: 'stopped' } };
@@ -106,7 +116,7 @@ function connectWorker(): void {
     if (!stopping) reconnect = setTimeout(connectWorker, 1000);
   });
 }
-function command(message: WorkerCommand): void { worker.send(JSON.stringify(message)); }
+function command(message: WorkerCommand): void { if(worker?.readyState===WebSocket.OPEN)worker.send(JSON.stringify(message)); }
 function json(response: ServerResponse, status: number, value: unknown): void {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   response.end(JSON.stringify(value));
@@ -132,7 +142,21 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
     response.setHeader('Access-Control-Allow-Headers', 'Content-Type'); response.writeHead(204); response.end(); return;
   }
-  if (path === '/health') { json(response, 200, { service: 'control', workerConnected: worker.readyState === WebSocket.OPEN }); return; }
+  if (path === '/health') { json(response, 200, { service: 'control', workerConnected: worker.readyState === WebSocket.OPEN,...agents.health() }); return; }
+  if(request.method==='GET'&&path==='/test-page/agent'){response.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});response.end(agentFixture());return;}
+  if(request.method==='POST'&&path==='/fixture/agent/login'){json(response,500,{error:'fixture login failure'});return;}
+  const agentPath=/^\/sessions\/([^/]+)\/agent-runs(?:\/([^/]+)(?:\/(stop|resume))?)?$/.exec(path);
+  if(agentPath?.[1]){
+    const sessionId=agentPath[1],runId=agentPath[2],operation=agentPath[3];if(!sessions.has(sessionId)){json(response,404,{error:'Session not found'});return;}
+    if(request.method==='GET'){const result=runId?agents.get(sessionId,runId):agents.list(sessionId);json(response,result?200:404,result??{error:'Run not found'});return;}
+    if(request.method==='POST'){
+      if(runId){const result=operation==='stop'?agents.stop(sessionId,runId):operation==='resume'?agents.resume(sessionId,runId):undefined;json(response,!result?404:result.error?409:200,result??{error:'Run not found'});return;}
+      if(!request.headers['content-type']?.startsWith('application/json')){json(response,415,{error:'Use JSON'});return;}
+      let input:unknown;try{input=await body(request);}catch{json(response,400,{error:'INVALID_JSON'});return;}
+      const parsed=RunSchema.pick({goal:true}).strict().safeParse(input);if(!parsed.success){json(response,400,{error:'TOOL_VALIDATION_ERROR'});return;}
+      const result=agents.start(sessionId,parsed.data.goal);json(response,result.error?409:201,result.error?result:result.run);return;
+    }
+  }
   const detectionPath = /^\/sessions\/([^/]+)\/(signals|findings)(?:\/([^/]+))?$/.exec(path);
   if (detectionPath?.[1]) {
     const result = detection.get(detectionPath[1]);
@@ -196,7 +220,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     if (worker.readyState !== WebSocket.OPEN) { json(response, 503, { error: 'Browser Worker is unavailable; retry shortly' }); return; }
     if (sessions.size >= 100) {
       const expired = [...sessions].find(([, value]) => ['closed', 'failed'].includes(value.session.status));
-      if (expired) { clearFrames(expired[0]); actions.forget(expired[0]); detection.forget(expired[0]); sessions.delete(expired[0]); }
+      if (expired) { clearFrames(expired[0]); actions.forget(expired[0]); detection.forget(expired[0]); agents.forget(expired[0]); sessions.delete(expired[0]); }
       else { json(response, 429, { error: 'Session limit reached; close a session first' }); return; }
     }
     const session: Session = { id: randomUUID(), status: 'starting', requestedUrl: parsed.data.url,
@@ -215,6 +239,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       if (['closed', 'failed'].includes(record.session.status)) { json(response, 200, record.session); return; }
       if (worker.readyState !== WebSocket.OPEN) { json(response, 503, { error: 'Worker unavailable' }); return; }
       controls.revoke(record.session.id, '正在关闭 Session');
+      agents.sessionEnded(record.session.id);
       // Prevent acquiring a fresh lease in the gap before Worker reports closed.
       closingSessions.add(record.session.id);
       detection.stop(record.session.id);
@@ -229,8 +254,14 @@ const server = createServer((request, response) => {
     if (!response.headersSent) json(response, 500, { error: 'Internal server error' }); else response.end();
   });
 });
-const wss = new WebSocketServer({ server, path: '/events', maxPayload: 16_384,
+const wss = new WebSocketServer({ noServer:true, maxPayload: 16_384,
   verifyClient: (info: { origin: string }) => !info.origin || [webOrigin, `http://127.0.0.1:${port}`, `http://localhost:${port}`].includes(info.origin),
+});
+const agentWss=new WebSocketServer({noServer:true,maxPayload:32768});
+server.on('upgrade',(request,socket,head)=>{
+  const path=new URL(request.url??'/',`http://127.0.0.1:${port}`).pathname;
+  if(path==='/agent-host'&&!request.headers.origin){agentWss.handleUpgrade(request,socket,head,ws=>agents.attach(ws));return;}
+  if(path==='/events'){wss.handleUpgrade(request,socket,head,ws=>wss.emit('connection',ws,request));return;}socket.destroy();
 });
 wss.on('connection', socket => {
   clientAlive.set(socket, true); socket.on('pong', () => clientAlive.set(socket, true));
@@ -270,6 +301,7 @@ const heartbeat = setInterval(() => {
 connectWorker();
 server.listen(port, '127.0.0.1', () => console.log(`Control API http://127.0.0.1:${port}`));
 function shutdown(): void {
+  agents.shutdown();agentWss.close();
   detection.stopAll();
   controls.revokeAll('Control 正在关闭');
   stopping = true; clearInterval(heartbeat); clearTimeout(reconnect); worker.close();

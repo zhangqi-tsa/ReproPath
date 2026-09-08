@@ -32,10 +32,12 @@ wss.on('connection', socket => {
   socket.on('message', raw => {
     try {
       const command = WorkerCommandSchema.parse(JSON.parse(raw.toString()));
+      if(command.type==='agent-epoch'){runtime.agentEpoch(command.sessionId,command.epoch);return;}
       if (command.type === 'frame-ack') { frameSender?.acknowledge(command); return; }
       void cleaning.then(() => {
         if (socket !== controller || socket.readyState !== WebSocket.OPEN) return;
         if (command.type === 'browser-input') return runtime.input(command);
+        if (command.type === 'agent-operation') return runtime.agentOperation(command);
         if (command.type === 'input-reset') return runtime.resetInput(command.sessionId);
         return command.type === 'start' ? runtime.start(command.session) : runtime.close(command.sessionId);
       }).catch(error => console.error('Worker command:', error));

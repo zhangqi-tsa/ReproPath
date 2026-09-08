@@ -1,6 +1,23 @@
 {
-  "name": "@repropath/web", "private": true, "version": "0.1.2", "type": "module",
-  "scripts": { "dev": "vite --host 127.0.0.1", "typecheck": "tsc --noEmit", "build": "vite build" },
-  "dependencies": { "@repropath/protocol": "workspace:*", "@repropath/streaming": "workspace:*", "react": "^19.1.1", "react-dom": "^19.1.1" },
-  "devDependencies": { "@types/react": "^19.1.12", "@types/react-dom": "^19.1.9", "vite": "^7.1.5" }
+  "name": "@repropath/web",
+  "private": true,
+  "version": "0.1.2",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "typecheck": "tsc --noEmit",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@repropath/protocol": "workspace:*",
+    "@repropath/streaming": "workspace:*",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "@repropath/agent-protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
+    "vite": "^7.1.5"
+  }
 }

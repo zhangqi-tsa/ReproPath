@@ -7,13 +7,14 @@ export const ActionTargetSchema = z.object({ tagName: z.string(), role: z.string
 export type ActionTarget = z.infer<typeof ActionTargetSchema>;
 const point = { x: z.number(), y: z.number() }; const button = z.enum(['left', 'middle', 'right']);
 export const ActionDetailSchema = z.discriminatedUnion('kind', [
+  z.object({kind:z.literal('navigation'),url:z.string()}),
   z.object({ kind: z.literal('click'), button, ...point }),
   z.object({ kind: z.literal('drag'), button, startX: z.number(), startY: z.number(), endX: z.number(), endY: z.number() }),
   z.object({ kind: z.literal('type'), characterCount: z.number().int().nonnegative() }),
   z.object({ kind: z.literal('scroll'), totalDeltaX: z.number(), totalDeltaY: z.number(), eventCount: z.number().int() }),
   z.object({ kind: z.literal('key'), key: z.string(), modifiers: z.array(z.string()) }),
 ]);
-export const ActionRecordSchema = z.object({ id: z.string().uuid(), sessionId: z.string(), pageId: z.string(), actor: z.enum(['human', 'agent', 'replay']), kind: z.enum(['click', 'drag', 'type', 'key', 'scroll']), status: z.enum(['recording', 'completed', 'interrupted']), startedAt: z.string(), completedAt: z.string().optional(), durationMs: z.number().optional(), sourceFrameSequence: z.number().optional(), target: ActionTargetSchema.optional(), detail: ActionDetailSchema, before: EvidenceSnapshotSchema.optional(), after: EvidenceSnapshotSchema.optional(), eventSequenceStart: z.number().int(), eventSequenceEnd: z.number().int().optional(), networkRequestIds: z.array(z.string()).max(1000), settle: z.object({ timedOut: z.boolean(), durationMs: z.number() }).optional(), evidenceStatus: z.enum(['pending', 'complete', 'partial', 'failed']) });
+export const ActionRecordSchema = z.object({ id: z.string().uuid(), sessionId: z.string(), pageId: z.string(), actor: z.enum(['human', 'agent', 'replay']), kind: z.enum(['click', 'drag', 'type', 'key', 'scroll', 'navigation']), status: z.enum(['recording', 'completed', 'interrupted']), startedAt: z.string(), completedAt: z.string().optional(), durationMs: z.number().optional(), sourceFrameSequence: z.number().optional(), target: ActionTargetSchema.optional(), detail: ActionDetailSchema, before: EvidenceSnapshotSchema.optional(), after: EvidenceSnapshotSchema.optional(), eventSequenceStart: z.number().int(), eventSequenceEnd: z.number().int().optional(), networkRequestIds: z.array(z.string()).max(1000), settle: z.object({ timedOut: z.boolean(), durationMs: z.number() }).optional(), evidenceStatus: z.enum(['pending', 'complete', 'partial', 'failed']) });
 export type ActionRecord = z.infer<typeof ActionRecordSchema>;
 export const ActionUpdateSchema = z.object({ type: z.literal('action-update'), action: ActionRecordSchema });
 export const MAX_ACTIONS = 500;

@@ -1,5 +1,17 @@
 {
-  "name": "@repropath/control", "private": true, "version": "0.1.2", "type": "module",
-  "scripts": { "dev": "tsx src/index.ts", "typecheck": "tsc --noEmit" },
-  "dependencies": { "@repropath/artifacts": "workspace:*", "@repropath/protocol": "workspace:*", "@repropath/streaming": "workspace:*", "ws": "^8.18.3" }
+  "name": "@repropath/control",
+  "private": true,
+  "version": "0.1.2",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@repropath/artifacts": "workspace:*",
+    "@repropath/protocol": "workspace:*",
+    "@repropath/streaming": "workspace:*",
+    "ws": "^8.18.3",
+    "@repropath/agent-protocol": "workspace:*"
+  }
 }
