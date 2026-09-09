@@ -1,0 +1,17 @@
+{
+  "date": "2026-09-08",
+  "baselineCommit": "8cddb86",
+  "environment": "Windows x64, Node v24.6.0, pnpm 10.17.1",
+  "experiment": {
+    "typecheck": { "command": "node node_modules/typescript/bin/tsc --noEmit", "exitCode": 0 },
+    "tests": { "command": "node --import tsx --test --test-concurrency=1 --test-reporter=tap tests/*.test.ts", "exitCode": 0, "passed": 59, "failed": 0, "raw": "tests.tap" },
+    "realSmoke": { "command": "node --import tsx src/real.ts", "exitCode": 0, "status": "SKIP", "reason": "Required AGENT environment configuration missing" },
+    "benchmark": { "exitCode": 0, "coldPerCandidate": 10, "fakeLoopsPerCandidate": 100, "raw": "benchmark.json" }
+  },
+  "existingProductRegression": {
+    "pnpm typecheck": { "exitCode": 0 },
+    "pnpm test": { "exitCode": 0, "passed": 64, "failed": 0, "durationMs": 119177.0305 },
+    "pnpm build": { "exitCode": 0, "viteVersion": "7.3.6", "modulesTransformed": 51 }
+  },
+  "scope": "Only experiments/agent-kernel added; production apps, packages and root workspace unchanged"
+}

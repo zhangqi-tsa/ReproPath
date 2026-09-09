@@ -1,17 +1,35 @@
 {
-  "name": "repropath", "private": true, "version": "0.1.2", "type": "module",
-  "packageManager": "pnpm@10.17.1", "engines": { "node": ">=22.12.0", "pnpm": ">=10 <11" },
+  "name": "repropath",
+  "private": true,
+  "version": "0.1.2",
+  "type": "module",
+  "packageManager": "pnpm@10.17.1",
+  "engines": {
+    "node": ">=22.12.0",
+    "pnpm": ">=10 <11"
+  },
   "scripts": {
     "postinstall": "playwright install chromium",
-    "dev": "concurrently --kill-others -n worker,control,web \"pnpm --filter @repropath/browser-worker dev\" \"pnpm --filter @repropath/control dev\" \"pnpm --filter @repropath/web dev\"",
-    "dev:headed": "concurrently --kill-others -n worker,control,web \"pnpm --filter @repropath/browser-worker dev --headed\" \"pnpm --filter @repropath/control dev\" \"pnpm --filter @repropath/web dev\"",
+    "dev": "concurrently -n worker,agent,control,web \"pnpm --filter @repropath/browser-worker dev\" \"pnpm --filter @repropath/agent-host dev\" \"pnpm --filter @repropath/control dev\" \"pnpm --filter @repropath/web dev\"",
+    "dev:headed": "concurrently -n worker,agent,control,web \"pnpm --filter @repropath/browser-worker dev --headed\" \"pnpm --filter @repropath/agent-host dev\" \"pnpm --filter @repropath/control dev\" \"pnpm --filter @repropath/web dev\"",
     "typecheck": "tsc --noEmit && pnpm -r typecheck",
     "test": "tsx --test --test-concurrency=1 tests/*.test.ts",
     "test:smoke": "tsx --test tests/smoke.test.ts",
-    "build": "pnpm --filter @repropath/web build"
+    "build": "pnpm --filter @repropath/web build",
+    "agent:smoke": "pnpm --filter @repropath/agent-host smoke"
   },
   "devDependencies": {
-    "@repropath/artifacts": "workspace:*", "@repropath/protocol": "workspace:*", "@repropath/streaming": "workspace:*", "@types/node": "^22.15.0", "@types/ws": "^8.18.0",
-    "concurrently": "^9.1.2", "playwright": "1.55.1", "tsx": "^4.20.5", "typescript": "^5.9.2", "vite": "^7.1.5", "ws": "^8.18.3"
+    "@repropath/artifacts": "workspace:*",
+    "@repropath/protocol": "workspace:*",
+    "@repropath/streaming": "workspace:*",
+    "@types/node": "^22.15.0",
+    "@types/ws": "^8.18.0",
+    "concurrently": "^9.1.2",
+    "playwright": "1.55.1",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.5",
+    "ws": "^8.18.3",
+    "@repropath/agent-protocol": "workspace:*"
   }
 }

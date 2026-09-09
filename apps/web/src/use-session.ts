@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ServerMessageSchema, SessionSchema, ActionRecordSchema, SignalListSchema, FindingListSchema, type Signal, type Finding, type DetectionStats, type ActionRecord, type BrowserFrame, type Session, type SessionEvent } from '@repropath/protocol';
 import { InputClient, type ControlUiState } from './input-client.js';
+import { RunSchema, StepSchema, type AgentRun, type AgentStep } from '@repropath/agent-protocol';
 
 export function useSession(id: string | undefined) {
   const [session, setSession] = useState<Session>();
+  const [agentRuns,setAgentRuns]=useState<{run:AgentRun;steps:AgentStep[]}[]>([]);
   const [events, setEvents] = useState<SessionEvent[]>([]);
   const [actions, setActions] = useState<ActionRecord[]>([]);
   const [signals, setSignals] = useState<Signal[]>([]);
@@ -25,6 +27,7 @@ export function useSession(id: string | undefined) {
   useEffect(() => {
     setSession(undefined); setEvents([]); setActions([]); setFrame(undefined); setError(''); setConnection(id ? '恢复 Session…' : '未订阅');
     setSignals([]); setFindings([]); setDetectionStats(undefined);
+    setAgentRuns([]);
     control.lost();
     if (!id) return;
     let disposed = false; let retry: ReturnType<typeof setTimeout>;
@@ -45,6 +48,12 @@ export function useSession(id: string | undefined) {
       let liveStats = false;
       socketRef.current = socket;
       socket.onopen = () => {
+        setAgentRuns([]);
+        void fetch(`/sessions/${encodeURIComponent(id!)}/agent-runs`,{signal:abort.signal}).then(async r=>{
+          if(!r.ok)throw Error();const raw=await r.json() as {run:unknown;steps:unknown[]}[];
+          const restored=raw.map(v=>({run:RunSchema.parse(v.run),steps:v.steps.map(s=>StepSchema.parse(s))}));
+          if(!disposed&&socketRef.current===socket)setAgentRuns(current=>{const merged=new Map(restored.map(r=>[r.run.id,r]));for(const item of current){const prior=merged.get(item.run.id);merged.set(item.run.id,{run:item.run,steps:[...new Map([...(prior?.steps??[]),...item.steps].map(s=>[s.id,s])).values()].sort((a,b)=>a.index-b.index)});}return [...merged.values()].slice(-20);});
+        }).catch(()=>{if(!disposed)setError('Agent Runs 恢复失败');});
         setActions([]);
         setSignals([]); setFindings([]); setDetectionStats(undefined);
         socket.send(JSON.stringify({ type: 'subscribe', sessionId: id }));
@@ -70,6 +79,9 @@ export function useSession(id: string | undefined) {
         if (disposed || socketRef.current !== socket) return;
         try {
           const data = ServerMessageSchema.parse(JSON.parse(String(message.data)));
+          if(data.type==='agent-run-update'){setAgentRuns(current=>{const found=current.find(v=>v.run.id===data.run.id);return [...current.filter(v=>v.run.id!==data.run.id),{run:data.run,steps:found?.steps??[]}].sort((a,b)=>a.run.createdAt.localeCompare(b.run.createdAt)).slice(-20);});return;}
+          if(data.type==='agent-step-update'){setAgentRuns(current=>current.map(v=>v.run.id===data.step.runId?{...v,steps:[...v.steps.filter(s=>s.id!==data.step.id),data.step].sort((a,b)=>a.index-b.index).slice(-20)}:v));return;}
+          if(data.type==='agent-operation-result')return;
           if (data.type === 'signal-created') { setSignals(previous => [...new Map([...previous, data.signal].map(signal => [signal.id, signal])).values()].slice(-2000)); return; }
           if (data.type === 'finding-update') { setFindings(previous => mergeFindings(previous, [data.finding])); return; }
           if (data.type === 'detection-stats') { liveStats = true; setDetectionStats(data.stats); return; }
@@ -102,7 +114,7 @@ export function useSession(id: string | undefined) {
     })();
     return () => { disposed = true; abort.abort(); clearTimeout(retry); control.dispose(); socketRef.current?.close(); socketRef.current = undefined; };
   }, [id, acknowledge, control]);
-  return { session, events, actions, signals, findings, detectionStats, frame, error, connection, acknowledge, control, controlState };
+  return { session, events, actions, signals, findings, detectionStats, agentRuns, frame, error, connection, acknowledge, control, controlState };
 }
 
 function mergeFindings(first: Finding[], second: Finding[]): Finding[] {

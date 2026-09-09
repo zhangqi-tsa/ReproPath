@@ -1,5 +1,14 @@
 {
-  "name": "@repropath/protocol", "private": true, "version": "0.1.2", "type": "module",
-  "exports": "./src/index.ts", "scripts": { "typecheck": "tsc --noEmit" },
-  "dependencies": { "zod": "^3.25.76" }
+  "name": "@repropath/protocol",
+  "private": true,
+  "version": "0.1.2",
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "4.5.4",
+    "@repropath/agent-protocol": "workspace:*"
+  }
 }

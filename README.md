@@ -1,6 +1,6 @@
-# ReproPath · Milestone 1.5 — Signal & Finding Foundation
+# ReproPath · Milestone 2.0 — Agent Driver Foundation
 
-当前能力：实时查看并人工控制真实 Chromium，记录 Action 与 Before/After Evidence；Control 用六类确定性规则检测 Signal，按当前 Session 内 fingerprint 聚合 Finding，供人工确认、排除或标记已知问题。默认 VIEW ONLY；原有 Timeline、Live View 和 Evidence 保留。
+当前能力：实时查看、人工控制或由 Agent 驱动真实 Chromium，复用 Action 与 Before/After Evidence。独立 Agent Host 使用 AI SDK，经 Control 的唯一控制权和策略校验调用 Worker。Control 继续用六类确定性规则检测 Signal、聚合 Finding，供人工确认、排除或标记已知问题。默认 VIEW ONLY，人工可抢占 Agent。
 
 **Finding is not a Bug or Issue. No AI is used in detection or triage.** Signal 是不可编辑的异常事实；只有 Finding 具有人工 triage 状态。检测、severity、fingerprint、grouping、标题均不使用 AI/LLM。
 
@@ -64,13 +64,14 @@ pnpm install
 pnpm dev
 ```
 
-该命令同时启动三个独立进程，任一进程退出则停止其余进程。Control 等待 Worker 自动连接；浏览器在创建第一个 Session 时启动。Ctrl+C 停止开发服务。
+该命令同时启动 Worker、Agent Host、Control、Web 四个服务。Agent Host 退出不会连带终止浏览器和人工控制；Ctrl+C 停止开发服务。浏览器在创建第一个 Session 时启动。缺少模型配置时 Host 仍健康，启动 Agent 返回 AGENT_MODEL_UNAVAILABLE。
 
 | 服务 | 默认地址 |
 | --- | --- |
 | Web UI | http://127.0.0.1:5173 |
 | Control API | http://127.0.0.1:4310 |
 | Browser Worker 健康检查 | http://127.0.0.1:4311/health |
+| Agent Host 健康检查 | http://127.0.0.1:4312/health |
 | 本地测试页面 | http://127.0.0.1:4310/test-page |
 
 请使用 `127.0.0.1` 打开 Web UI，以匹配默认 Origin 配置。`GET /health` 返回 Control 的 `workerConnected` 状态。
@@ -112,7 +113,7 @@ Invoke-RestMethod -Method Delete -Uri "http://127.0.0.1:4310/sessions/$($session
 
 ### Human Control 与 Control Lease
 
-先 subscribe，再发送 `control-acquire`。Control 维护每 Session 唯一的 socket 所有权和随机 leaseId；先到者获得控制，不支持抢占。`control-state` 只向持有者发送 leaseId，其他客户端显示 CONTROLLED BY OTHER。即使复制了 leaseId，另一个 socket 也不能注入输入。
+先 subscribe，再发送 `control-acquire`。Control Authority 维护每 Session 唯一所有权：Human 绑定 socket 和随机 leaseId，Agent 绑定 runId 和 capability epoch。Human 之间先到者获得控制；Human 可以抢占 Agent。`control-state` 只向 Human 持有者发送 leaseId，其他客户端显示 CONTROLLED BY OTHER。即使复制了 leaseId，另一个 socket 也不能注入输入。
 
 `control-release`、控制 socket 断开、Session 关闭/失败、Worker/Control 断开会撤销租约、清空队列并重置已按下的鼠标按钮与修饰键。重连/刷新恢复画面但不恢复租约，回到 VIEW ONLY。UI 状态还包括 REQUESTING CONTROL 和 CONTROL LOST。5 秒未收到输入结果会撤销控制；这不是固定时长租约。
 
@@ -229,13 +230,13 @@ M1.2 历史目标站验收：输入 `http://usercenter.tsatest.cn` → running �
 - 状态与事件仅存内存，服务重启不恢复；每 Session 保存最近 10,000 条事件，最多保留 100 个 Session，满额优先淘汰终结 Session，否则返回 429。UI 同样保留最近 10,000 条。
 - 仅本机单用户开发工具，监听 `127.0.0.1`，不提供公网部署、认证、持久化、浏览器隔离安全边界或多 Worker 调度。输入 URL 会由本机 Chromium 访问，包括本地网络地址。
 - 仅支持原活动 Page 的鼠标/键盘输入；没有 popup 控制、触摸、文件上传、原生对话框、系统剪贴板读取或跨设备完整 IME 保证。Meta 快捷键未在本次 Windows 环境进行 macOS 人工验收。
-- CAPTCHA：未解决，且不阻塞 M1.5 本地 fixture 验收。headless/headed 均不保证第三方人机验证通过；scoped auth bootstrap 仍仅为本地诊断/bootstrap 功能。本次不调查或修复 CAPTCHA。
-- Live View 帧仅在内存传输，M1.4 Evidence 独立落盘；M1.5 新增确定性 Signal/Finding。不实现 Video、HAR、请求/响应 Body、Cookie/Storage snapshot、AI/LLM/Agent、Issue/Bug 对象、Replay、Regression 产品能力、Jira、数据库、Redis、S3/OSS/MinIO、WebRTC、Multi-agent 或通用认证/DLP 系统。仓库回归测试不属于产品 Regression 功能。
+- CAPTCHA：未解决，且不阻塞 M2.0 本地 fixture 验收。headless/headed 均不保证第三方人机验证通过；scoped auth bootstrap 仍仅为本地诊断/bootstrap 功能。本次不调查或修复 CAPTCHA。
+- Live View 帧仅在内存传输，Evidence 独立落盘；Signal/Finding 保持确定性。M2.0 仅增加单 Agent 驱动，不实现 Video、HAR、请求/响应 Body、Cookie/Storage snapshot、Issue/Bug 对象、Replay、Regression 产品能力、Jira、数据库、Redis、S3/OSS/MinIO、WebRTC、Multi-agent 或通用认证/DLP 系统。仓库回归测试不属于产品 Regression 功能。
 
 
 ## M1.4 Action & Evidence
 
-`Raw BrowserInput != Action`、`SessionEvent != Action`、`BrowserFrame != EvidenceSnapshot`。Runtime 的 ActionRecorder 在 PageInput 校验通过后、首次真实注入前识别目标并捕获 Before。目标只含短语义描述，不含 value/outerHTML，不是可回放 locator。actor 模型预留 human/agent/replay，目前仅 human。
+`Raw BrowserInput != Action`、`SessionEvent != Action`、`BrowserFrame != EvidenceSnapshot`。Runtime 的 ActionRecorder 在输入校验通过后、首次真实注入前识别目标并捕获 Before。目标只含短语义描述，不含 value/outerHTML，不是可回放 locator。Human 和 Agent 共用此记录入口，分别标记 actor=human/agent；replay 尚未实现。
 
 | 输入 | Action 归并 |
 | --- | --- |
@@ -323,8 +324,56 @@ API/WS 提供 stats，UI 显示“检测结果已达到当前 Session 上限”�
 - `PATCH /sessions/:id/findings/:findingId`，JSON `{ "status": "confirmed" }`；四种合法状态，非法状态/额外字段 400，未知 Finding 404
 - WS：`signal-created`、`finding-update`、`detection-stats`；重连从独立 REST 恢复，Finding revision 防止旧状态覆盖。不会把检测结果塞进原 SessionEvent snapshot。
 
-UI 顺序：Live Session → Findings → Actions → Raw Timeline。Finding 可展开 Signal facts、源事件、最近保留的关联 Action 和原有 Before/After/Network，复用 Evidence 文件。无 Action 或历史已淘汰均有提示。
+UI 顺序：Live Session → AI Agent → Findings → Actions → Raw Timeline。Finding 可展开 Signal facts、源事件、最近保留的关联 Action 和原有 Before/After/Network，复用 Evidence 文件。无 Action 或历史已淘汰均有提示。
 
 本地验收：`pnpm dev`，目标 URL 输入 `http://127.0.0.1:4310/test-page/signals`，接管后依次触发 HTTP 500、确认问题、再触发 500、Console Error、Duplicate POST，检查刷新和关闭后的记录。fixture 也包含真实断连、Page Error、慢 500 和负例按钮。
 
-M1.5 的完整规则、容量、隐私及验收记录见 [milestone-1.5.md](docs/milestone-1.5.md)。本阶段不进入 Agent/M2。
+M1.5 的历史规则、容量、隐私及验收记录见 [milestone-1.5.md](docs/milestone-1.5.md)。
+
+## M2.0 Agent Driver
+
+```text
+Web goal → Control AgentRun → 独立 Agent Host / AI SDK ToolLoopAgent
+                                 ↓ 私有 localhost WebSocket，Gateway v1
+                          Control Authority + policy
+                                 ↓ capability epoch
+                         Worker semantic Observation
+                                 ↓ recorded operation
+                    Action(actor=agent) → Evidence → Signal → Finding
+```
+
+`apps/agent-host` 是模型依赖唯一生产入口；`packages/agent-protocol` 保存不含 SDK 类型的协议。Host 不连接 Worker、不 import Playwright。AI SDK 7.0.93、OpenAI-compatible 3.0.44 和 Zod 4.5.4 锁定版本。Pi 是未来 external driver 选项，MCP-first 是未来适配边界；当前未集成 Pi、MCP 或 Mastra。见 [ADR 001](docs/adr/001-agent-kernel.md)。
+
+启动前为 Agent Host 设置以下环境变量（不要把实际密钥提交到仓库）：
+
+```text
+REPROPATH_AGENT_BASE_URL=https://your-compatible-endpoint.example/v1
+REPROPATH_AGENT_API_KEY=<本机配置>
+REPROPATH_AGENT_MODEL=<支持工具调用的模型 ID>
+```
+
+可选 `AGENT_HOST_PORT` 默认 4312，`AGENT_CONTROL_URL` 默认 `ws://127.0.0.1:4310/agent-host`；更改 Control 端口时同步修改。Control `/health` 显示 `agentHostConnected` 和 `modelAvailable`；后者代表配置存在，不能证明远端模型可用。`pnpm agent:smoke` 检查配置的真实 endpoint；未配置时明确 SKIP。
+
+创建 `/test-page/agent` Session，输入“检查登录按钮提交后是否出现异常。”并点击 **Start Agent**。运行时显示 AGENT CONTROL、步骤和摘要，点击“人工接管”会先撤销旧 epoch，再取消模型/工具，Run 进入 `paused_by_human`。释放人工控制不会自动恢复；点击“继续 Agent”后重新获取观察。UI 刷新不取消 Agent，Human 租约刷新仍撤销。停止、Session 关闭或进程失联会结束运行并撤销能力；历史记录在当前 Control 进程内仍可读。
+
+| 工具 | 输入与边界 |
+| --- | --- |
+| observe_page | 有界语义观察，不提供完整 DOM 或截图 |
+| click | observationId + elementRef，目标须在视口内且未被覆盖 |
+| type_text | observationId + elementRef + text（最多 4096），只存 characterCount |
+| press_key | 特殊键 / KeyA / Digit0 等，及 Control/Meta/Shift/Alt 修饰符 |
+| scroll | deltaX/Y 各 ±5000，滚动后重新观察 |
+| navigate | HTTP(S)，禁止凭据，限 Session 初始请求 origin |
+| go_back | 当前 Page 后退，经同一 Action 管道记录 |
+| wait | 1–5000ms，可取消 |
+| finish | 最多 4000 字符事实摘要，不修改 Finding 状态 |
+
+每个模型回合最多执行一个工具；多工具回复由运行时硬拒绝。每轮模型前重新提取观察，仅传目标、当前观察和最近 5 步安全摘要。观察最多 200 个元素、50 个标题、100 个文本片段、10 个 Finding；文本字段总预算受协议限制，超限标记 truncated。元素 ref 仅对应当前观察，导航、重新观察、接管会失效；不猜测选择器。过期引用返回 STALE_OBSERVATION / STALE_ELEMENT。
+
+每 Run 最多 20 步、累计运行 5 分钟；模型回合最多等待 60 秒。每 Session 保留最近 20 个 Run，每 Run 最多 20 个 Step，重启不恢复。Run/Step 经独立 REST 和 `agent-run-update` / `agent-step-update` 分发，不混入 SessionEvent。API：`POST/GET /sessions/:id/agent-runs`，`GET /sessions/:id/agent-runs/:runId`，`POST .../:runId/stop` 和 `POST .../:runId/resume`。创建 body 为 `{ "goal": "..." }`。
+
+Agent 不向模型发送 Evidence Screenshot、Cookie、Storage、完整 DOM 或请求/响应正文；语义提取排除输入控件 value。输入原文只用于临时工具调用，Step/Action 只保存字符数；模型自由文本和隐藏 reasoning 不持久化。目标、可见业务文本、语义名称和 finish 摘要仍可能包含敏感内容，不是通用 DLP。Evidence 继续使用原有遮盖和 DOM 净化。
+
+策略阻止明显的删除账号、支付、转账、改密目标；这是有限语义规则，不能识别任意网站业务副作用。页面文本被标记为不可信，但没有完整 prompt-injection 防御保证。导航工具的 origin 限制不是网络沙箱：链接、重定向和历史导航仍由网站决定。只支持原活动 Page 的主文档，不支持 iframe/shadow DOM 元素、上传、下载、跨页规划、Memory、自动诊断或自动 triage。接管阻止尚未执行的旧 epoch 操作，不能撤回已经提交的网络请求。
+
+验收包含 64 项历史测试和 24 项 M2 测试；固定假模型通过真实 AI SDK、进程通信及 Chromium，不替代浏览器。完整结果、手工步骤及真实模型 smoke 的执行状态见 [M2.0 验收记录](docs/milestone-2.0.md)。

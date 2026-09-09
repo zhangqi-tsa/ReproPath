@@ -6,6 +6,8 @@ import { PageInput } from './input.js';
 import { LocalArtifactStore, type ArtifactStore } from '@repropath/artifacts';
 import { EvidenceCapture } from './evidence.js';
 import { ActionRecorder } from './action-recorder.js';
+import { AgentPage } from './agent-page.js';
+import type { AgentOperation } from '@repropath/agent-protocol';
 
 interface RuntimePage { id: string; dispose: () => void }
 interface ActiveSession {
@@ -14,6 +16,7 @@ interface ActiveSession {
   disposeContext?: () => void; cast?: Screencast; retry?: ReturnType<typeof setTimeout>;
   input?: PageInput;
   recorder?: ActionRecorder;
+  agent?: AgentPage;
 }
 export class BrowserRuntime {
   private browser?: Browser;
@@ -70,6 +73,7 @@ export class BrowserRuntime {
     const navigation = (frame: Frame) => {
       emit({ type: 'navigation', payload: { url: frame.url(), frameId: this.frameId(frame), isMainFrame: frame === page.mainFrame() } });
       if (page === session.page && frame === page.mainFrame()) {
+        session.agent?.invalidate();
         session.state.currentUrl = page.url(); this.state(session); void this.refresh(session);
       }
     };
@@ -155,6 +159,7 @@ export class BrowserRuntime {
     if (this.sessions.has(state.id)) return;
     const session: ActiveSession = { state: { ...state, viewport: { ...DEFAULT_VIEWPORT } }, sequence: 0, frameSequence: 0, pages: new Map(), terminal: false };
     session.recorder = new ActionRecorder(state.id, () => session.page, () => session.sequence, new EvidenceCapture(this.artifactStore), action => this.publish({ type: 'action-update', action }));
+    session.agent = new AgentPage(()=>session.page,()=>session.state.activePageId,session.recorder,process.env.NODE_ENV==='test'?Number(process.env.REPROPATH_TEST_AGENT_DELAY_MS??0):0);
     session.input = new PageInput(() => session.page, () => ({ running: !session.terminal && session.state.status === 'running',
       pageId: session.state.activePageId, ...session.state.viewport }), summary => {
       if (session.page) this.emit(session, { type: 'human-input', payload: summary }, session.page);
@@ -178,6 +183,7 @@ export class BrowserRuntime {
         });
       })()`);
       const page = await context.newPage(); this.watchPage(session, page);
+      await session.agent!.guardNavigations(page,state.requestedUrl);
       if (session.terminal) { await context.close(); return; }
       await page.goto(state.requestedUrl, { waitUntil: 'domcontentloaded', timeout: this.navigationTimeout });
       if (session.terminal) return;
@@ -218,6 +224,7 @@ export class BrowserRuntime {
     if (status === 'failed') { session.state.error = message; console.error(`[${session.state.id}] ${message}`); }
     this.emit(session, { type: 'lifecycle', payload: { status, message } });
     session.terminal = true; clearTimeout(session.retry); this.state(session);
+    session.agent?.setEpoch(null);
     // Fence pending inputs now. Context closure also releases native pressed state.
     void session.input?.reset();
     session.cleanup = (async () => {
@@ -236,6 +243,8 @@ export class BrowserRuntime {
       leaseId: message.leaseId, inputSequence: message.inputSequence, ok: false, code: 'SESSION_NOT_RUNNING', message: 'Session 未运行' });
   }
   resetInput(sessionId: string): Promise<void> { return this.sessions.get(sessionId)?.input?.reset() ?? Promise.resolve(); }
+  agentEpoch(sessionId:string,epoch:string|null):void{this.sessions.get(sessionId)?.agent?.setEpoch(epoch);}
+  async agentOperation(command:AgentOperation):Promise<void>{const session=this.sessions.get(command.sessionId);const result=session?.state.status==='running'&&session.agent?await session.agent.execute(command):{ok:false as const,code:'SESSION_NOT_RUNNING' as const};this.publish({type:'agent-operation-result',id:command.id,sessionId:command.sessionId,result});}
   async closeAll(): Promise<void> {
     await Promise.all([...this.sessions.keys()].map(id => this.close(id)));
     const browser = this.browser ?? await this.launching?.catch(() => undefined); await browser?.close();

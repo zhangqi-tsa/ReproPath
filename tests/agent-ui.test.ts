@@ -1,0 +1,22 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { chromium } from 'playwright';
+import { freePort,ready,service,until } from './helpers.js';
+import { AgentFakeModel,happy } from './agent-model.js';
+test('M2 outer Chromium UI, refresh, takeover, resume and narrow layout',{timeout:90000},async t=>{
+  const wp=await freePort(),cp=await freePort(),ap=await freePort(),vp=await freePort();const base=`http://127.0.0.1:${cp}`,web=`http://127.0.0.1:${vp}`;const fake=new AgentFakeModel();const modelURL=await fake.start();
+  const worker=service('apps/browser-worker/src/index.ts',{WORKER_PORT:String(wp),REPROPATH_AUTH_FILE:''});const control=service('apps/control/src/index.ts',{CONTROL_PORT:String(cp),WORKER_URL:`ws://127.0.0.1:${wp}/worker`,WEB_ORIGIN:web});const host=service('apps/agent-host/src/index.ts',{AGENT_HOST_PORT:String(ap),AGENT_CONTROL_URL:`ws://127.0.0.1:${cp}/agent-host`,REPROPATH_AGENT_BASE_URL:modelURL,REPROPATH_AGENT_API_KEY:'fixture',REPROPATH_AGENT_MODEL:'fixture'});const ui=service('tests/web-server.ts',{WEB_PORT:String(vp),CONTROL_URL:base});
+  const browser=await chromium.launch();t.after(async()=>{await browser.close();await ui.stop();await host.stop();await control.stop();await worker.stop();await fake.close();});await ready(base,true);await ready(web);await until(async()=>(await(await fetch(`${base}/health`)).json()).modelAvailable,'model ready');
+  const page=await browser.newPage({viewport:{width:1440,height:1000}});page.setDefaultTimeout(15000);const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));await page.goto(web);
+  await page.locator('#url').fill(`${base}/test-page/agent`);await page.getByRole('button',{name:'Create Session',exact:true}).click();await page.locator('[data-testid="status"]').filter({hasText:'running'}).waitFor();await page.locator('[data-testid="view-status"]').filter({hasText:'LIVE'}).waitFor();
+  fake.reset((o,i)=>({...happy(o,i),delayMs:i===0?1500:30}));await page.getByRole('button',{name:'Start Agent',exact:true}).click();await page.locator('[data-testid="control-mode"]').filter({hasText:'AGENT CONTROL'}).waitFor();
+  await page.reload();await page.locator('[data-testid="agent-status"]').filter({hasText:'running'}).waitFor();await page.locator('[data-testid="control-mode"]').filter({hasText:'AGENT CONTROL'}).waitFor();
+  await page.locator('[data-testid="agent-status"]').filter({hasText:'completed'}).waitFor();await page.getByText('agent · CLICK',{exact:true}).first().waitFor();assert.ok(await page.getByText(/HTTP 500/).count());await page.getByRole('button',{name:/agent · CLICK/}).first().click();await page.getByAltText('Before evidence',{exact:true}).first().waitFor();await page.getByAltText('After evidence',{exact:true}).first().waitFor();
+  fake.reset(()=>({delayMs:2000,text:'pending'}));await page.getByRole('button',{name:'Start Agent',exact:true}).click();await page.locator('[data-testid="control-mode"]').filter({hasText:'AGENT CONTROL'}).waitFor();await until(()=>fake.requests.length===1,'model pending');
+  await page.getByRole('button',{name:'人工接管',exact:true}).click();await page.locator('[data-testid="agent-status"]').filter({hasText:'paused_by_human'}).waitFor();await page.locator('[data-testid="control-mode"]').filter({hasText:'HUMAN CONTROL'}).waitFor();
+  await page.getByRole('button',{name:'结束接管',exact:true}).click();assert.equal(await page.locator('[data-testid="agent-status"]').textContent(),'paused_by_human');
+  fake.reset(happy);await page.getByRole('button',{name:'继续 Agent',exact:true}).click();await page.locator('[data-testid="agent-status"]').filter({hasText:'completed'}).waitFor();
+  await page.reload();await page.locator('[data-testid="agent-status"]').filter({hasText:'completed'}).waitFor();assert.ok(await page.getByText('agent · CLICK',{exact:true}).count()>=2);
+  await page.setViewportSize({width:390,height:844});await page.waitForTimeout(150);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);assert.deepEqual(errors,[]);
+  await page.getByRole('button',{name:'关闭 Session',exact:true}).click();await page.locator('[data-testid="status"]').filter({hasText:'closed'}).waitFor();assert.ok(await page.getByText('agent · CLICK',{exact:true}).count()>=2);
+});

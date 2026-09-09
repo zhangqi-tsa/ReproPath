@@ -32,6 +32,7 @@ export const ControlReleaseSchema = z.object({ type: z.literal('control-release'
 export const ControlStateSchema = z.object({
   type: z.literal('control-state'), sessionId: z.string(), status: z.enum(['available', 'controlled']),
   heldBySelf: z.boolean(), leaseId: z.string().uuid().optional(), reason: z.string().optional(),
+  owner: z.enum(['human','agent']).optional(),
 });
 export type ControlState = z.infer<typeof ControlStateSchema>;
 export const ControlErrorSchema = z.object({ type: z.literal('control-error'), sessionId: z.string(), code: z.enum(['CONTROL_NOT_OWNED', 'CONTROL_BUSY', 'SESSION_NOT_RUNNING']), message: z.string() });

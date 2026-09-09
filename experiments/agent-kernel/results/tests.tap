@@ -1,0 +1,417 @@
+TAP version 13
+# Subtest: AI SDK native approval pauses execution
+ok 1 - AI SDK native approval pauses execution
+  ---
+  duration_ms: 74.7366
+  type: 'test'
+  ...
+# Subtest: ai-sdk: acceptance
+    # Subtest: normal / observation / events
+    ok 1 - normal / observation / events
+      ---
+      duration_ms: 147.6629
+      type: 'test'
+      ...
+    # Subtest: stream message
+    ok 2 - stream message
+      ---
+      duration_ms: 18.4171
+      type: 'test'
+      ...
+    # Subtest: invalid schema
+    ok 3 - invalid schema
+      ---
+      duration_ms: 14.1391
+      type: 'test'
+      ...
+    # Subtest: unknown tool
+    ok 4 - unknown tool
+      ---
+      duration_ms: 12.9143
+      type: 'test'
+      ...
+    # Subtest: one tool per turn
+    ok 5 - one tool per turn
+      ---
+      duration_ms: 10.9429
+      type: 'test'
+      ...
+    # Subtest: parallel click click finish blocked
+    ok 6 - parallel click click finish blocked
+      ---
+      duration_ms: 21.7861
+      type: 'test'
+      ...
+    # Subtest: stale recovery
+    ok 7 - stale recovery
+      ---
+      duration_ms: 52.1382
+      type: 'test'
+      ...
+    # Subtest: budget 10
+    ok 8 - budget 10
+      ---
+      duration_ms: 92.7968
+      type: 'test'
+      ...
+    # Subtest: 20 steps bounded context
+    ok 9 - 20 steps bounded context
+      ---
+      duration_ms: 161.5182
+      type: 'test'
+      ...
+# InvalidResponseDataError [AI_InvalidResponseDataError]: Response stream ended without a finish reason.
+#     at Object.flush (D:\\Documents\\ReproPath\\experiments\\agent-kernel\\node_modules\\.pnpm\\@ai-sdk+openai-compatible@3.0.44_zod@4.5.4\\node_modules\\@ai-sdk\\openai-compatible\\src\\chat\\openai-compatible-chat-language-model.ts:717:24)
+#     at invokePromiseCallback (node:internal/webstreams/util:172:10)
+#     at Object.<anonymous> (node:internal/webstreams/util:177:23)
+#     at transformStreamDefaultSinkCloseAlgorithm (node:internal/webstreams/transformstream:621:43)
+#     at node:internal/webstreams/transformstream:379:11
+#     at writableStreamDefaultControllerProcessClose (node:internal/webstreams/writablestream:1162:28)
+#     at writableStreamDefaultControllerAdvanceQueueIfNeeded (node:internal/webstreams/writablestream:1253:5)
+#     at writableStreamDefaultControllerClose (node:internal/webstreams/writablestream:1220:3)
+#     at writableStreamClose (node:internal/webstreams/writablestream:722:3)
+#     at writableStreamDefaultWriterClose (node:internal/webstreams/writablestream:1091:10) {
+#   cause: undefined,
+#   data: undefined,
+#   Symbol(vercel.ai.error): true,
+#   Symbol(vercel.ai.error.AI_InvalidResponseDataError): true
+# }
+    # Subtest: model protocol error
+    ok 10 - model protocol error
+      ---
+      duration_ms: 10.9202
+      type: 'test'
+      ...
+    # Subtest: tool execution error
+    ok 11 - tool execution error
+      ---
+      duration_ms: 34.7552
+      type: 'test'
+      ...
+    # Subtest: timeout 500ms
+    ok 12 - timeout 500ms
+      ---
+      duration_ms: 514.1384
+      type: 'test'
+      ...
+    # Subtest: plain abort
+    ok 13 - plain abort
+      ---
+      duration_ms: 42.7763
+      type: 'test'
+      ...
+    # Subtest: takeover model / resume
+    ok 14 - takeover model / resume
+      ---
+      duration_ms: 731.533
+      type: 'test'
+      ...
+    # Subtest: takeover tool / resume
+    ok 15 - takeover tool / resume
+      ---
+      duration_ms: 754.8279
+      type: 'test'
+      ...
+    # Subtest: MCP allowlist echo error=false
+    ok 16 - MCP allowlist echo error=false
+      ---
+      duration_ms: 130.7161
+      type: 'test'
+      ...
+    # Subtest: MCP allowlist echo error=true
+    ok 17 - MCP allowlist echo error=true
+      ---
+      duration_ms: 48.9973
+      type: 'test'
+      ...
+    # Subtest: MCP hallucinated dangerous tool rejected
+    ok 18 - MCP hallucinated dangerous tool rejected
+      ---
+      duration_ms: 41.9996
+      type: 'test'
+      ...
+    1..18
+ok 2 - ai-sdk: acceptance
+  ---
+  duration_ms: 3014.3113
+  type: 'test'
+  ...
+# Subtest: pi: acceptance
+    # Subtest: normal / observation / events
+    ok 1 - normal / observation / events
+      ---
+      duration_ms: 61.1634
+      type: 'test'
+      ...
+    # Subtest: stream message
+    ok 2 - stream message
+      ---
+      duration_ms: 8.0176
+      type: 'test'
+      ...
+    # Subtest: invalid schema
+    ok 3 - invalid schema
+      ---
+      duration_ms: 7.0755
+      type: 'test'
+      ...
+    # Subtest: unknown tool
+    ok 4 - unknown tool
+      ---
+      duration_ms: 6.4268
+      type: 'test'
+      ...
+    # Subtest: one tool per turn
+    ok 5 - one tool per turn
+      ---
+      duration_ms: 7.4389
+      type: 'test'
+      ...
+    # Subtest: parallel click click finish blocked
+    ok 6 - parallel click click finish blocked
+      ---
+      duration_ms: 21.9817
+      type: 'test'
+      ...
+    # Subtest: stale recovery
+    ok 7 - stale recovery
+      ---
+      duration_ms: 34.4128
+      type: 'test'
+      ...
+    # Subtest: budget 10
+    ok 8 - budget 10
+      ---
+      duration_ms: 66.0502
+      type: 'test'
+      ...
+    # Subtest: 20 steps bounded context
+    ok 9 - 20 steps bounded context
+      ---
+      duration_ms: 114.4529
+      type: 'test'
+      ...
+    # Subtest: model protocol error
+    ok 10 - model protocol error
+      ---
+      duration_ms: 7.2005
+      type: 'test'
+      ...
+    # Subtest: tool execution error
+    ok 11 - tool execution error
+      ---
+      duration_ms: 10.0358
+      type: 'test'
+      ...
+    # Subtest: timeout 500ms
+    ok 12 - timeout 500ms
+      ---
+      duration_ms: 516.9047
+      type: 'test'
+      ...
+    # Subtest: plain abort
+    ok 13 - plain abort
+      ---
+      duration_ms: 46.0862
+      type: 'test'
+      ...
+    # Subtest: takeover model / resume
+    ok 14 - takeover model / resume
+      ---
+      duration_ms: 707.4454
+      type: 'test'
+      ...
+    # Subtest: takeover tool / resume
+    ok 15 - takeover tool / resume
+      ---
+      duration_ms: 725.3355
+      type: 'test'
+      ...
+    # Subtest: MCP allowlist echo error=false
+    ok 16 - MCP allowlist echo error=false
+      ---
+      duration_ms: 55.8145
+      type: 'test'
+      ...
+    # Subtest: MCP allowlist echo error=true
+    ok 17 - MCP allowlist echo error=true
+      ---
+      duration_ms: 45.9139
+      type: 'test'
+      ...
+    # Subtest: MCP hallucinated dangerous tool rejected
+    ok 18 - MCP hallucinated dangerous tool rejected
+      ---
+      duration_ms: 32.3886
+      type: 'test'
+      ...
+    1..18
+ok 3 - pi: acceptance
+  ---
+  duration_ms: 5704.503
+  type: 'test'
+  ...
+# Subtest: mastra: acceptance
+    # Subtest: normal / observation / events
+    ok 1 - normal / observation / events
+      ---
+      duration_ms: 442.9239
+      type: 'test'
+      ...
+    # Subtest: stream message
+    ok 2 - stream message
+      ---
+      duration_ms: 20.2017
+      type: 'test'
+      ...
+    # Subtest: invalid schema
+    ok 3 - invalid schema
+      ---
+      duration_ms: 16.7668
+      type: 'test'
+      ...
+    # Subtest: unknown tool
+    ok 4 - unknown tool
+      ---
+      duration_ms: 18.9852
+      type: 'test'
+      ...
+    # Subtest: one tool per turn
+    ok 5 - one tool per turn
+      ---
+      duration_ms: 19.7015
+      type: 'test'
+      ...
+    # Subtest: parallel click click finish blocked
+    ok 6 - parallel click click finish blocked
+      ---
+      duration_ms: 39.2506
+      type: 'test'
+      ...
+    # Subtest: stale recovery
+    ok 7 - stale recovery
+      ---
+      duration_ms: 117.519
+      type: 'test'
+      ...
+    # Subtest: budget 10
+    ok 8 - budget 10
+      ---
+      duration_ms: 177.1188
+      type: 'test'
+      ...
+    # Subtest: 20 steps bounded context
+    ok 9 - 20 steps bounded context
+      ---
+      duration_ms: 366.6076
+      type: 'test'
+      ...
+# Error in agent stream {
+#   error: InvalidResponseDataError [AI_InvalidResponseDataError]: Response stream ended without a finish reason.
+#       at Object.flush (D:\\Documents\\ReproPath\\experiments\\agent-kernel\\node_modules\\.pnpm\\@ai-sdk+openai-compatible@3.0.44_zod@4.5.4\\node_modules\\@ai-sdk\\openai-compatible\\src\\chat\\openai-compatible-chat-language-model.ts:717:24)
+#       at invokePromiseCallback (node:internal/webstreams/util:172:10)
+#       at Object.<anonymous> (node:internal/webstreams/util:177:23)
+#       at transformStreamDefaultSinkCloseAlgorithm (node:internal/webstreams/transformstream:621:43)
+#       at node:internal/webstreams/transformstream:379:11
+#       at writableStreamDefaultControllerProcessClose (node:internal/webstreams/writablestream:1162:28)
+#       at writableStreamDefaultControllerAdvanceQueueIfNeeded (node:internal/webstreams/writablestream:1253:5)
+#       at writableStreamDefaultControllerClose (node:internal/webstreams/writablestream:1220:3)
+#       at writableStreamClose (node:internal/webstreams/writablestream:722:3)
+#       at writableStreamDefaultWriterClose (node:internal/webstreams/writablestream:1091:10) {
+#     cause: undefined,
+#     data: undefined,
+#     Symbol(vercel.ai.error): true,
+#     Symbol(vercel.ai.error.AI_InvalidResponseDataError): true
+#   },
+#   runId: '150b455d-4cc0-42f1-93c3-90a8a6e39978',
+#   provider: 'bakeoff.chat',
+#   modelId: 'fixture-model'
+# }
+    # Subtest: model protocol error
+    ok 10 - model protocol error
+      ---
+      duration_ms: 17.8433
+      type: 'test'
+      ...
+    # Subtest: tool execution error
+    ok 11 - tool execution error
+      ---
+      duration_ms: 41.1682
+      type: 'test'
+      ...
+    # Subtest: timeout 500ms
+    ok 12 - timeout 500ms
+      ---
+      duration_ms: 505.7324
+      type: 'test'
+      ...
+    # Subtest: plain abort
+    ok 13 - plain abort
+      ---
+      duration_ms: 46.058
+      type: 'test'
+      ...
+    # Subtest: takeover model / resume
+    ok 14 - takeover model / resume
+      ---
+      duration_ms: 772.1092
+      type: 'test'
+      ...
+    # Subtest: takeover tool / resume
+    ok 15 - takeover tool / resume
+      ---
+      duration_ms: 809.0072
+      type: 'test'
+      ...
+    # Subtest: MCP allowlist echo error=false
+    ok 16 - MCP allowlist echo error=false
+      ---
+      duration_ms: 387.8274
+      type: 'test'
+      ...
+# [LLM] [local] Error calling tool: echo {
+#   error: 'Error: fixture error\\n' +
+#     '    at executeToolCall (D:\\\\Documents\\\\ReproPath\\\\experiments\\\\agent-kernel\\\\node_modules\\\\.pnpm\\\\@mastra+mcp@1.17.3_@mastra+_0143bd4c2c53e0cac2ab4c6bf61609dd\\\\node_modules\\\\@mastra\\\\mcp\\\\dist\\\\index.js:22226:15)\\n' +
+#     '    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\\n' +
+#     '    at async <anonymous> (D:\\\\Documents\\\\ReproPath\\\\experiments\\\\agent-kernel\\\\node_modules\\\\.pnpm\\\\@mastra+mcp@1.17.3_@mastra+_0143bd4c2c53e0cac2ab4c6bf61609dd\\\\node_modules\\\\@mastra\\\\mcp\\\\dist\\\\index.js:22253:15)\\n' +
+#     '    at async Tool.Tool.execute (D:\\\\Documents\\\\ReproPath\\\\experiments\\\\agent-kernel\\\\node_modules\\\\.pnpm\\\\@mastra+core@1.64.0_ai@7.0._177dbb78277e1cced503722dd4a61a1c\\\\node_modules\\\\@mastra\\\\core\\\\src\\\\tools\\\\tool.ts:582:24)\\n' +
+#     '    at async echo (D:\\\\Documents\\\\ReproPath\\\\experiments\\\\agent-kernel\\\\src\\\\mastra\\\\index.ts:18:46)\\n' +
+#     '    at async RunHost.execute (D:\\\\Documents\\\\ReproPath\\\\experiments\\\\agent-kernel\\\\src\\\\common\\\\host.ts:48:30)\\n' +
+#     '    at async Tool.Tool.execute (D:\\\\Documents\\\\ReproPath\\\\experiments\\\\agent-kernel\\\\node_modules\\\\.pnpm\\\\@mastra+core@1.64.0_ai@7.0._177dbb78277e1cced503722dd4a61a1c\\\\node_modules\\\\@mastra\\\\core\\\\src\\\\tools\\\\tool.ts:582:24)\\n' +
+#     '    at async execFunction (D:\\\\Documents\\\\ReproPath\\\\experiments\\\\agent-kernel\\\\node_modules\\\\.pnpm\\\\@mastra+core@1.64.0_ai@7.0._177dbb78277e1cced503722dd4a61a1c\\\\node_modules\\\\@mastra\\\\core\\\\dist\\\\utils-C9npriyv.js:439:15)\\n' +
+#     '    at async Immediate.<anonymous> (D:\\\\Documents\\\\ReproPath\\\\experiments\\\\agent-kernel\\\\node_modules\\\\.pnpm\\\\@mastra+core@1.64.0_ai@7.0._177dbb78277e1cced503722dd4a61a1c\\\\node_modules\\\\@mastra\\\\core\\\\dist\\\\utils-C9npriyv.js:570:16)',
+#   toolArgs: { text: 'hello' }
+# }
+    # Subtest: MCP allowlist echo error=true
+    ok 17 - MCP allowlist echo error=true
+      ---
+      duration_ms: 114.5824
+      type: 'test'
+      ...
+    # Subtest: MCP hallucinated dangerous tool rejected
+    ok 18 - MCP hallucinated dangerous tool rejected
+      ---
+      duration_ms: 71.912
+      type: 'test'
+      ...
+    1..18
+ok 4 - mastra: acceptance
+  ---
+  duration_ms: 6230.5011
+  type: 'test'
+  ...
+# Subtest: Pi SDK trusted inline extension / resource loader / in-memory session
+ok 5 - Pi SDK trusted inline extension / resource loader / in-memory session
+  ---
+  duration_ms: 29.2278
+  type: 'test'
+  ...
+1..5
+# tests 59
+# suites 0
+# pass 59
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 22104.4344

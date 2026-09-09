@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Page } from 'playwright';
+import type { Page, ElementHandle } from 'playwright';
 import type { ActionRecord, ActionTarget, EvidenceSnapshot } from '@repropath/protocol';
 import type { ArtifactStore } from '@repropath/artifacts';
 
@@ -9,15 +9,15 @@ async function bounded<T>(promise: Promise<T>, ms = 500): Promise<T> {
   try { return await Promise.race([promise, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Evidence timeout')), ms); })]); }
   finally { clearTimeout(timer!); }
 }
-export async function identifyTarget(page: Page, point?: { x: number; y: number }): Promise<ActionTarget | undefined> {
-  try { return await bounded(page.evaluate(point => {
-    const element = point ? document.elementFromPoint(point.x, point.y) : document.activeElement;
-    if (!element) return undefined;
+export async function identifyTarget(page: Page, point?: { x: number; y: number }, handle?:ElementHandle): Promise<ActionTarget | undefined> {
+  try { return await bounded(page.evaluate(({point,handle}) => {
+    const element = handle ?? (point ? document.elementFromPoint(point.x, point.y) : document.activeElement);
+    if (!(element instanceof Element)) return undefined;
     const editable = !!element.closest('input,textarea,select,[contenteditable]:not([contenteditable=false])');
     return { tagName: element.tagName.toLowerCase(), role: element.getAttribute('role')?.slice(0,120) || undefined, ariaLabel: element.getAttribute('aria-label')?.slice(0,120) || undefined,
       name: element.getAttribute('name')?.slice(0,120) || undefined, type: element.getAttribute('type')?.slice(0,120) || undefined, testId: element.getAttribute('data-testid')?.slice(0,120) || undefined,
       text: editable || element.querySelector('input,textarea,select,[contenteditable]') ? undefined : element.textContent?.trim().slice(0, 120) };
-  }, point), 150); } catch { return undefined; }
+  }, {point,handle}), 150); } catch { return undefined; }
 }
 export async function sanitizedDOM(page: Page): Promise<string> {
   return bounded(page.evaluate(() => {

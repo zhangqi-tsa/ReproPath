@@ -50,7 +50,7 @@ export function BrowserView({ session, frame, connected, acknowledge, control, c
   return <div className={`browser-panel ${controlled ? 'human-controlled' : ''} ${focused && controlled ? 'remote-focused' : ''}`}>
     <div className="browser-toolbar"><span className={live ? 'live-indicator' : 'view-indicator'} data-testid="view-status">{live ? '● LIVE' : message}</span>
       <span className="control-mode" data-testid="control-mode">{connected ? controlState.mode : controlState.mode === 'CONTROL LOST' ? 'CONTROL LOST' : 'VIEW ONLY'}</span>
-      {controlled ? <button onClick={() => control.release()}>结束接管</button> : <button disabled={!live || !connected || controlState.mode === 'REQUESTING CONTROL'} onClick={() => control.acquire(session.id)}>{controlState.mode === 'REQUESTING CONTROL' ? '请求接管中…' : '接管浏览器'}</button>}
+      {controlled ? <button onClick={() => control.release()}>结束接管</button> : <button disabled={!live || !connected || controlState.mode === 'REQUESTING CONTROL'} onClick={() => control.acquire(session.id)}>{controlState.mode === 'REQUESTING CONTROL' ? '请求接管中…' : controlState.mode === 'AGENT CONTROL' ? '人工接管' : '接管浏览器'}</button>}
     </div>
     <div className="browser-stage" style={{ aspectRatio: `${session.viewport.width} / ${session.viewport.height}` }}>
       <canvas ref={canvas} aria-label={controlled ? '实时浏览器画面（可控制）' : '实时浏览器画面（只读）'} data-testid="browser-canvas" data-frame-sequence={drawn} hidden={!live} />

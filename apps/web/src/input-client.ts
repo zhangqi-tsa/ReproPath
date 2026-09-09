@@ -1,7 +1,7 @@
 import type { ControlState, InputAction, InputResult } from '@repropath/protocol';
 import { InputBuffer } from '@repropath/streaming';
 
-export type ControlMode = 'VIEW ONLY' | 'REQUESTING CONTROL' | 'HUMAN CONTROL' | 'CONTROLLED BY OTHER' | 'CONTROL LOST';
+export type ControlMode = 'VIEW ONLY' | 'REQUESTING CONTROL' | 'HUMAN CONTROL' | 'CONTROLLED BY OTHER' | 'CONTROL LOST' | 'AGENT CONTROL';
 export interface ControlUiState { mode: ControlMode; error: string }
 export class InputClient {
   private lease?: string;
@@ -28,7 +28,7 @@ export class InputClient {
       this.lease = state.leaseId; this.update('HUMAN CONTROL');
     } else {
       const wasControlled = Boolean(this.lease); this.clear();
-      this.update(state.status === 'controlled' ? 'CONTROLLED BY OTHER' : wasControlled ? 'CONTROL LOST' : 'VIEW ONLY', state.status === 'controlled' ? this.state.error : wasControlled ? (state.reason ?? '控制权已释放') : '');
+      this.update(state.owner==='agent'?'AGENT CONTROL':state.status === 'controlled' ? 'CONTROLLED BY OTHER' : wasControlled ? 'CONTROL LOST' : 'VIEW ONLY', state.status === 'controlled' ? this.state.error : wasControlled ? (state.reason ?? '控制权已释放') : '');
     }
   }
   denied(message: string): void { this.update(this.state.mode === 'HUMAN CONTROL' ? 'HUMAN CONTROL' : 'CONTROLLED BY OTHER', message); }
