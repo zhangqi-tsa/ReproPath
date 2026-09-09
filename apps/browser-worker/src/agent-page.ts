@@ -6,7 +6,24 @@ import type { ActionRecorder } from './action-recorder.js';
 export class AgentPage {
   private refs=new Map<string,ElementHandle>();private observationId?:string;private epoch?:string;private generation=0;private waits=new Set<()=>void>();
   constructor(private page:()=>Page|undefined,private pageId:()=>string|null,private recorder:ActionRecorder,private delayBeforeMutation=0){}
-  setEpoch(epoch:string|null){this.epoch=epoch??undefined;this.invalidate();for(const cancel of this.waits)cancel();this.waits.clear();this.recorder.interrupt();}
+  private blockedNavigation=false;
+  async guardNavigations(page:Page,allowedUrl:string){
+    const origin=new URL(allowedUrl).origin;
+    const cdp=await page.context().newCDPSession(page);
+    const {frameTree}=await cdp.send('Page.getFrameTree');
+    const onRequest=(event:{frameId:string;requestId:string;request:{url:string}})=>{void (async()=>{
+      if(this.epoch&&event.frameId===frameTree.frame.id&&new URL(event.request.url).origin!==origin){
+        this.blockedNavigation=true;
+        // 204 cancels the document replacement without committing an error page.
+        await cdp.send('Fetch.fulfillRequest',{requestId:event.requestId,responseCode:204});
+      }else await cdp.send('Fetch.continueRequest',{requestId:event.requestId});
+    })().catch(()=>{});};
+    cdp.on('Fetch.requestPaused',onRequest);
+    page.once('close',()=>cdp.removeListener('Fetch.requestPaused',onRequest));
+    // CDP pauses every redirect hop; Playwright route() only sees the first URL.
+    await cdp.send('Fetch.enable',{patterns:[{urlPattern:'*',resourceType:'Document',requestStage:'Request'}]});
+  }
+  setEpoch(epoch:string|null){this.epoch=epoch??undefined;this.blockedNavigation=false;this.invalidate();for(const cancel of this.waits)cancel();this.waits.clear();this.recorder.interrupt();}
   invalidate(){this.generation++;this.observationId=undefined;for(const ref of this.refs.values())void ref.dispose().catch(()=>{});this.refs.clear();}
   private delay(ms:number){return new Promise<void>(resolve=>{const done=()=>{clearTimeout(timer);this.waits.delete(done);resolve();};const timer=setTimeout(done,ms);this.waits.add(done);});}
   async observe(sessionId:string):Promise<PageObservation>{
@@ -42,6 +59,7 @@ export class AgentPage {
   async execute(command:AgentOperation):Promise<ToolResult>{
     const page=this.page();const valid=()=>this.epoch===command.epoch&&this.pageId()===command.pageId&&!!page&&!page.isClosed();
     if(!valid()||!page)return {ok:false,code:'CONTROL_NOT_OWNED'};
+    if(this.blockedNavigation){this.blockedNavigation=false;return {ok:false,code:'POLICY_BLOCKED'};}
     const call=command.call;
     try{
       if(call.name==='observe_page'){const observation=await this.observe(command.sessionId);return valid()?{ok:true,observation}:{ok:false,code:'CONTROL_NOT_OWNED'};}
@@ -73,8 +91,8 @@ export class AgentPage {
         else if(call.name==='scroll')await page.mouse.wheel(call.args.deltaX,call.args.deltaY);
         else if(call.name==='navigate')await page.goto(call.args.url,{waitUntil:'domcontentloaded',timeout:15000});
         else await page.goBack({waitUntil:'domcontentloaded',timeout:15000});
-      },point);
-      this.invalidate();return valid()?{ok:true,actionId,summary:`${call.name} completed`}:{ok:false,code:'CONTROL_NOT_OWNED'};
-    }catch{return {ok:false,code:valid()?'TOOL_EXECUTION_ERROR':'CONTROL_NOT_OWNED'};}
+      },point,element);
+      this.invalidate();if(this.blockedNavigation){this.blockedNavigation=false;return {ok:false,code:'POLICY_BLOCKED',actionId};}return valid()?{ok:true,actionId,summary:`${call.name} completed`}:{ok:false,code:'CONTROL_NOT_OWNED'};
+    }catch{const blocked=this.blockedNavigation;this.blockedNavigation=false;return {ok:false,code:valid()?(blocked?'POLICY_BLOCKED':'TOOL_EXECUTION_ERROR'):'CONTROL_NOT_OWNED'};}
   }
 }

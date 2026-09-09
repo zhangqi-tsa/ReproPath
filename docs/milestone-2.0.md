@@ -71,7 +71,17 @@ Agent Host 是唯一生产模型依赖入口。内部协议版本 1，Pi/MCP 仅
 
 Goal、可见文本、语义标签和页面自行输出到 URL/console 的内容可能敏感；启动按钮前明确告知。模型服务凭据仅由环境变量读取，错误日志不打印 provider 原始报文。scoped auth import 仍是本地 diagnostic/bootstrap 功能，不是认证系统；不新增 auth 文件或复制 Chrome profile。
 
-只支持原活动 Page 的主文档语义元素，不支持 iframe/shadow DOM、上传下载、跨页规划、Memory、自动诊断或自动 triage。危险操作过滤仅为有限语义规则；navigate 限初始 origin，但网站链接、redirect、go_back 不构成网络隔离。页面文字不可信，当前没有完整 prompt-injection 防御保证。只面向 localhost 单用户，私有 WS 不构成恶意本机进程隔离。
+只支持原活动 Page 的主文档语义元素，不支持 iframe/shadow DOM、上传下载、跨页规划、Memory、自动诊断或自动 triage。危险操作过滤仅为有限语义规则。Agent epoch 持有控制时，Worker 在 Chromium Fetch 请求阶段拦截主 Frame 的跨 origin 文档请求，包括链接、JS 跳转、表单和每一跳 HTTP redirect；允许 origin 固定为 Session 初始 requestedUrl 的 origin。阻止的文档请求以本地 204 结束，保留当前页面，并在当前或下一次工具结果返回 POLICY_BLOCKED。非主 Frame 文档与跨域 API、图片、脚本、样式不受此 origin 规则限制；Human 接管后恢复普通导航行为。这不是网络沙箱。页面文字不可信，当前没有完整 prompt-injection 防御保证。只面向 localhost 单用户，私有 WS 不构成恶意本机进程隔离。
+
+## 合并前加固（2026-09-09）
+
+Host agent-end 的终态映射为：goal_reached → completed / goal_reached；budget_exhausted → completed / budget_exhausted；run_timeout、model_error、tool_error → failed / 对应原因。finish 工具仍沿用原有立即完成路径。
+
+Agent click/type_text 的 Action target 在变更前直接读取当前观察绑定的 ElementHandle，不再依赖屏幕命中子元素或先前焦点。仅保存原有有限语义属性，不读取 value 或保存输入原文。
+
+新增真实 Chromium 测试覆盖同源链接、外链、JS 导航、表单、跨域 HTTP redirect、跨域 API/子 Frame 放行、嵌套按钮与未聚焦输入框的归因及隐私、撤权后的 Human 导航。另以真实 WebSocket 覆盖 Host 五种终态映射与所有权释放。原有 M1.1–M2.0 测试保留。
+
+最终验证：pnpm typecheck PASS；pnpm test **98/98 PASS**（原 88 项 + 10 项加固测试，156.4 秒）；pnpm build PASS。测试默认使用每次独立的证据目录，避免历史文件扫描耗时影响证据写入；原有帧流测试增加第二个导航 CDP 会话的监听清理断言，原有背压/帧检查保持。
 
 CAPTCHA **未解决且非阻塞**；本次不调查、修复或绕过第三方 CAPTCHA。真实外部模型 smoke 未配置而跳过，这也限制了对具体服务兼容性的结论。
 

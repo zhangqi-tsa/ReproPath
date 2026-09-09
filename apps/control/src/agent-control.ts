@@ -20,7 +20,7 @@ export class AgentControl {
         if(m.index!==r.run.stepCount+1||m.index>r.run.limits.maxSteps){this.end(r,'completed','budget_exhausted');return;}
         r.run.stepCount=m.index;r.run.status='running';const step:AgentStep={id:randomUUID(),runId:r.run.id,sessionId:r.run.sessionId,index:m.index,status:'running',startedAt:new Date().toISOString()};r.steps.push(step);this.deps.broadcast(r.run.sessionId,{type:'agent-step-update',step});this.publish(r);return;
       }
-      if(m.type==='agent-end'){this.end(r,m.reason==='budget_exhausted'?'completed':'failed',m.reason==='goal_reached'?'model_error':m.reason,m.code);return;}
+      if(m.type==='agent-end'){this.end(r,['goal_reached','budget_exhausted'].includes(m.reason)?'completed':'failed',m.reason,m.code);return;}
       void this.tool(r,m.call,m.stepIndex).then(result=>this.send({type:'agent-tool-result',id:m.id,result})).catch(()=>this.send({type:'agent-tool-result',id:m.id,result:{ok:false,code:'TOOL_EXECUTION_ERROR'}}));
     }catch{socket.close(1008,'INVALID_AGENT_PROTOCOL');}});
     socket.on('error',()=>{});socket.on('close',()=>{if(this.host!==socket)return;this.host=undefined;this.modelAvailable=false;for(const r of this.records.values())if(r.epoch)this.end(r,'failed','model_error','AGENT_HOST_UNAVAILABLE');});

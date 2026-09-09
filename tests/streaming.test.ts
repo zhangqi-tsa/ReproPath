@@ -61,13 +61,17 @@ test('CDP ACKs keep producing real frames under backpressure; bounded latest-fra
   assert.equal(sender.stats.pending, 1); assert.equal(sender.stats.inFlight, 1);
   sender.acknowledge({ type: 'frame-ack', sessionId: first.sessionId, pageId: first.pageId, frameSequence: first.frameSequence });
   assert.equal(sent.length, 2); assert.equal(sent[1]?.frameSequence, realFrame.frameSequence + 9999);
-  assert.equal(cdps.length, 1);
-  const cdp = cdps[0]!;
+  assert.equal(cdps.length, 2); // Navigation guard and independent screencast session.
+  const listeners = cdps as unknown as import('node:events').EventEmitter[];
+  const cdp = listeners.find(c=>c.listenerCount('Page.screencastFrame')===1)!;
+  const guard = listeners.find(c=>c.listenerCount('Fetch.requestPaused')===1)!;
+  assert.ok(guard);
   assert.ok('listenerCount' in cdp && typeof cdp.listenerCount === 'function');
   assert.equal(cdp.listenerCount('Page.screencastFrame'), 1);
   await runtime.close(session.id);
   assert.equal(browser.contexts().length, 0); assert.ok(page.isClosed()); assert.equal(context.pages().length, 0);
   assert.equal(cdp.listenerCount('Page.screencastFrame'), 0);
+  assert.equal(guard.listenerCount('Fetch.requestPaused'), 0);
   const count = frames.length; await delay(250); assert.equal(frames.length, count);
   assert.ok(messages.some(message => message.type === 'state' && message.session.screencast.status === 'stopped'));
   assert.equal(SessionEventSchema.safeParse(realFrame).success, false);

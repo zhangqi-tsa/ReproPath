@@ -183,6 +183,7 @@ export class BrowserRuntime {
         });
       })()`);
       const page = await context.newPage(); this.watchPage(session, page);
+      await session.agent!.guardNavigations(page,state.requestedUrl);
       if (session.terminal) { await context.close(); return; }
       await page.goto(state.requestedUrl, { waitUntil: 'domcontentloaded', timeout: this.navigationTimeout });
       if (session.terminal) return;
